@@ -1,0 +1,2 @@
+mkdir -p /data/filebrowser/
+docker run -d -v /data/filebrowser/sites/root:/srv  -v /data/filebrowser/filebrowserconfig.json:/etc/config.json  -v /data/filebrowser/database.db:/etc/database.db -p 8070:80 --name  filebrowser  hurlenko/filebrowser
