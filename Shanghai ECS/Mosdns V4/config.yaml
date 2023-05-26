@@ -1,0 +1,526 @@
+# Powered by Apad.pro
+# https://apad.pro/easymosdns
+#
+log:
+    file: "./mosdns.log"
+    level: info
+
+data_providers:
+  - tag: chinalist
+    file: ./rules/china_domain_list.txt
+    auto_reload: true
+  - tag: gfwlist
+    file: ./rules/gfw_domain_list.txt
+    auto_reload: true
+  - tag: cdncn
+    file: ./rules/cdn_domain_list.txt
+    auto_reload: true
+  - tag: chinaip
+    file: ./rules/china_ip_list.txt
+    auto_reload: true
+  - tag: gfwip
+    file: ./rules/gfw_ip_list.txt
+    auto_reload: true
+  - tag: adlist
+    file: ./rules/ad_domain_list.txt
+    auto_reload: true
+  - tag: ecscn
+    file: ./ecs_cn_domain.txt
+    auto_reload: true
+  - tag: ecstw
+    file: ./ecs_tw_domain.txt
+    auto_reload: true
+  - tag: hosts
+    file: ./hosts.txt
+    auto_reload: true
+
+plugins:
+  # 缓存的插件
+  - tag: cache
+    type: cache
+    args:
+      size: 102400
+      compress_resp: false # (实验性)(v4.4+)启用应答压缩。大缓存场景可能会稍微降低内存占用。
+                            # 注意: 如果使用 redis 外部缓存，切换该选项必须清空 redis 缓存。 
+      redis: 'redis://127.0.0.1:6379/0'
+  # redis-server 超时阈值。单位: 毫秒。默认: 1000。一般无需修改。
+  # 如果 redis-server 在该时间内无响应，cache 会临时停用缓存。同时间歇性尝试 ping
+  # redis-server，直至再次成功连接。
+      redis_timeout: 1000
+      lazy_cache_ttl: 259200
+      lazy_cache_reply_ttl: 3  # 返回过期应答的 TTL。默认 5
+      cache_everything: true
+
+  # Hosts的插件
+  - tag: hosts
+    type: hosts
+    args:
+      hosts:
+        - "provider:hosts"
+
+  # 调整ECS的插件
+  # [auto|global|cn|tw]
+  - tag: ecs_auto
+    type: ecs
+    args:
+      auto: true
+      mask4: 24
+      force_overwrite: false
+  - tag: ecs_global
+    type: ecs
+    args:
+      auto: true
+      mask4: 22
+      force_overwrite: false
+  - tag: ecs_cn
+    type: ecs
+    args:
+      auto: false
+      ipv4: "1.116.151.0"
+      ipv6: "2402:4e00:40::1"
+      mask4: 24
+      force_overwrite: true
+  - tag: ecs_tw
+    type: ecs
+    args:
+      auto: false
+      ipv4: "101.101.101.0"
+      ipv6: "2001:b000:168::1"
+      mask4: 22
+      force_overwrite: true
+
+  # 调整TTL的插件
+  - tag: ttl_short
+    type: ttl
+    args:
+      minimal_ttl: 60
+      maximum_ttl: 3600
+  - tag: ttl_long
+    type: ttl
+    args:
+      minimal_ttl: 600
+      maximum_ttl: 86400
+
+  # 匹配PTR类型请求的插件
+  - tag: query_is_ptr
+    type: query_matcher
+    args:
+      qtype: [12]
+
+  # 匹配TYPE65类型请求的插件
+  - tag: qtype65
+    type: query_matcher
+    args:
+      qtype: [65]
+      
+  # 屏蔽请求的插件
+  - tag: black_hole
+    type: blackhole
+    args:
+      rcode: 0
+      ipv4: "127.0.0.1"
+      ipv6: "::1"
+
+  # 匹配Akamai的插件
+  - tag: response_cname_akamai
+    type: response_matcher
+    args:
+      cname:
+        - "akamaiedge.net"
+        - "akadns.net"
+        - "edgekey.net"
+        - "ak1.net"
+        - "aka-ai.com"
+        - "aka-ai.net"
+        - "akacrypto.net"
+        - "akadeem.net"
+        - "akadns.com"
+        - "akaeai.com"
+        - "akafms.net"
+        - "akahost.net"
+        - "akaint.net"
+        - "akam.net"
+        - "akamaa.com"
+        - "akamah.com"
+        - "akamai-access.com"
+        - "akamai-access.net"
+        - "akamai-cdn.com"
+        - "akamai-platform-internal.net"
+        - "akamai-platform-staging.com"
+        - "akamai-platform.net"
+        - "akamai-regression.net"
+        - "akamai-staging.net"
+        - "akamai-sucks.net"
+        - "akamai-trials.com"
+        - "akamai.co.kr"
+        - "akamai.com"
+        - "akamai.net"
+        - "akamaientrypoint.net"
+        - "akamaietpcnctest.com"
+        - "akamaietpcompromisedcnctest.com"
+        - "akamaietpcompromisedmalwaretest.com"
+        - "akamaietpmalwaretest.com"
+        - "akamaietpphishingtest.com"
+        - "akamaihd-staging.net"
+        - "akamaihd.com"
+        - "akamaihd.net"
+        - "akamaimagicmath.net"
+        - "akamaistream.net"
+        - "akamaitech.com"
+        - "akamaitech.net"
+        - "akamaitechnologies.com"
+        - "akamaitechnologies.net"
+        - "akamaized-staging.net"
+        - "akamaized.net"
+        - "akamaizercentral.com"
+        - "akamak.com"
+        - "akamam.com"
+        - "akamci.com"
+        - "akami.com"
+        - "akami.net"
+        - "akamii.com"
+        - "akamqi.com"
+        - "akastream.com"
+        - "akastream.net"
+        - "akatns.net"
+        - "iamakamai.com"
+        - "iamakamai.net"
+        - "soasta-dswb.com"
+        - "srtcdn.net"
+  
+  # 匹配本地域名的插件
+  - tag: query_is_local_domain
+    type: query_matcher
+    args:
+      domain:
+        - "provider:chinalist"
+
+  # 匹配污染域名的插件
+  - tag: query_is_non_local_domain
+    type: query_matcher
+    args:
+      domain:
+        - "provider:gfwlist"
+
+  # 匹配CDN域名的插件
+  - tag: query_is_cdn_cn_domain
+    type: query_matcher
+    args:
+      domain:
+        - "provider:cdncn"
+
+  # 匹配广告域名的插件
+  - tag: query_is_ad_domain
+    type: query_matcher
+    args:
+      domain:
+        - "provider:adlist"
+
+  # 匹配强制本地解析域名的插件
+  - tag: query_is_cn_domain
+    type: query_matcher
+    args:
+      domain:
+        - "provider:ecscn"
+
+  # 匹配强制非本地解析域名的插件
+  - tag: query_is_tw_domain
+    type: query_matcher
+    args:
+      domain:
+        - "provider:ecstw"
+
+  # 匹配本地IP的插件
+  - tag: response_has_local_ip
+    type: response_matcher
+    args:
+      ip:
+        - "provider:chinaip"
+
+  # 匹配污染IP的插件
+  - tag: response_has_gfw_ip
+    type: response_matcher
+    args:
+      ip:
+        - "provider:gfwip"
+  
+  # 匹配内网域名的插件
+  - tag: query_is_lan_domain
+    type: query_matcher
+    args:
+      domain:
+        - ".lan"
+
+  # 限制客户端的请求数
+  - tag: client_limit
+    type: "client_limiter"
+    args:
+      max_qps: 100 # 最大 QPS。客户端的请求数超过时，会 REFUSED 然后 _return。
+      v4_mask: 32  # ipv4 的 mask。用于限制整个 IP 段。默认 32。
+      v6_mask: 48  # ipv6 的 mask。默认 48。
+
+  # IP反查域名的插件
+  - tag: reverse_lookup
+    type: reverse_lookup
+    args:
+      size: 65535
+      redis: "redis://localhost:6379/0"
+      ttl: 3600
+      handle_ptr: true
+############################################################################
+############################################################################
+########## local_metrics_collector #########################################
+  - tag: local
+    type: metrics_collector
+
+  - tag: alidns_met
+    type: metrics_collector
+
+  - tag: dnspod_met
+    type: metrics_collector
+
+  # 转发至本地服务器的插件
+#######################################################################
+  - tag: forward_alidns
+    type: fast_forward
+    args:
+      upstream:
+        - addr: "udp://223.5.5.5" #Alidns
+          insecure_skip_verify: true
+         # enable_pipeline: true
+
+  - tag: alidns_resolve
+    type: sequence
+    args:
+      exec:
+        - alidns_met #统计
+        - forward_alidns
+##########################
+  - tag: forward_dnspod
+    type: fast_forward
+    args:
+      upstream:
+        - addr: "udp://119.29.29.29" #Dnspod
+          insecure_skip_verify: true
+          #enable_pipeline: true
+  
+  - tag: dnspod_resolve
+    type: sequence
+    args:
+      exec:
+        - dnspod_met #统计
+        - forward_dnspod
+######################################################################
+
+  - tag: local_resolve
+    type: sequence
+    args:
+      exec:
+        - local #统计
+        - primary:
+            - dnspod_resolve
+          secondary:
+            - alidns_resolve
+          fast_fallback: 20
+          always_standby: false  
+############################################################################################################
+
+############################################################################################################
+##########  remote_metrics_collector########################################################################################
+  - tag: remote
+    type: metrics_collector
+
+  - tag: oolongcha_met
+    type: metrics_collector
+
+  - tag: google_met
+    type: metrics_collector
+
+  - tag: apad_met
+    type: metrics_collector
+  # 转发至远程服务器的插件
+###########################################################################################################
+  - tag: forward_oolongcha
+    type: fast_forward
+    args:
+      upstream:
+        - addr: "https://dns.oolongcha.top/dns-query" # Oolongcha
+          dial_addr: "47.242.79.87"
+          enable_http3: true
+          insecure_skip_verify: true
+
+  - tag: oolongcha_resolve
+    type: sequence
+    args:
+      exec:
+        - oolongcha_met #统计
+        - forward_oolongcha
+######
+  - tag: forward_google
+    type: fast_forward
+    args:
+      upstream:
+        - addr: "tls://8.8.4.4:853" # Google
+          #enable_http3: true
+          enable_pipeline: true
+          insecure_skip_verify: true
+
+  - tag: google_resolve
+    type: sequence
+    args:
+      exec:
+        - google_met #统计
+        - forward_google
+
+#####
+  - tag: forward_apad
+    type: fast_forward
+    args:
+      upstream:
+        - addr: "udp://120.48.143.226:5353" #Apad
+          #enable_http3: true
+          #enable_pipeline: true
+          insecure_skip_verify: true 
+  
+  - tag: apad_resolve
+    type: sequence
+    args:
+      exec:
+        - apad_met #统计
+        - forward_apad
+
+##############################################################################################################
+  - tag: remote_resolve
+    type: sequence
+    args:
+      exec:
+        - remote #统计
+        - primary:
+            - oolongcha_resolve
+          secondary:
+            - google_resolve
+            - apad_resolve
+          fast_fallback: 100
+          always_standby: false
+
+##########################################################################################
+###metrics_collector，
+  - tag: finalmet
+    type: metrics_collector
+
+  # 主要的运行逻辑插件
+  # sequence 插件中调用的插件 tag 必须在 sequence 前定义
+  # 否则 sequence 找不到对应插件
+  - tag: main_sequence
+    type: sequence
+    args:
+      exec:
+        # 在 info 级别记录请求。包括请求的域名，类型，客户端地址，应答状态，请求处理时间等。
+        - _query_summary
+        
+        # 统计
+        - finalmet
+        
+        # 限制客户端的请求数
+        - client_limit    
+        
+        # 域名映射IP
+        - hosts
+
+        # 获取ECS
+        - ecs_auto
+        
+        #  只保留 ECS。
+        - _edns0_filter_ecs_only
+        
+        # IP 反查域名
+        - reverse_lookup
+        
+        # 缓存
+        - cache
+        
+        # 屏蔽TYPE65类型请求
+        - if: qtype65
+          exec:
+          - black_hole
+          - _return
+
+        # 强制用本地服务器解析
+        - if: "(query_is_cn_domain) || [query_is_ptr]"
+          exec:
+            - local_resolve
+            - _return
+
+        # 强制用非本地服务器解析
+        - if: query_is_tw_domain
+          exec:
+            - ecs_tw
+            - remote_resolve
+            - ttl_long
+            - _return
+
+        # 屏蔽广告域名
+        - if: "(query_is_ad_domain) || (query_is_lan_domain)"
+          exec:
+          - _new_nxdomain_response
+          - _return
+
+        # 已知的本地域名或CDN域名用本地服务器解析
+        - if: "(query_is_local_domain) || (query_is_cdn_cn_domain) || (response_cname_akamai)"
+          exec:
+            - local_resolve
+            - _return
+
+        # 已知的污染域名用远程服务器解析
+        - if: query_is_non_local_domain
+          exec:
+            - _prefer_ipv4
+            - ecs_cn
+            - remote_resolve
+            - _return
+
+        # 剩下的未知域名用IP分流，分流原理请参考fallback的工作流程
+          # primary 从远程服务器获取应答，丢弃本地IP的结果
+        - primary:
+            - _prefer_ipv4
+            - ecs_global
+            - remote_resolve
+            - ttl_short
+            - if: "(response_has_local_ip) || (response_cname_akamai)"
+              exec:
+                - _drop_response
+          # secondary 从本地服务器获取应答
+          secondary:
+            - ecs_auto
+            - local_resolve
+            - if: "(! response_has_local_ip) && [_response_valid_answer] || (response_has_gfw_ip)"
+              exec:
+                - _prefer_ipv4
+                - ecs_cn
+                - remote_resolve
+                - ttl_long
+          # 如果 primary 超过这个延时还没响应，可以假设 primary 出现了问题
+          # 这时会采用 secondary 应答。单位: 毫秒
+          fast_fallback: 1500
+          always_standby: false
+
+servers:
+  - exec: main_sequence
+    timeout: 5
+    listeners:
+      #- protocol: udp
+      #  addr: "0.0.0.0:6153"
+      #- protocol: tcp
+       # addr: "0.0.0.0:5553"
+      - protocol: http
+        addr: "127.0.0.1:9053"
+        url_path: "/dns-query"
+        get_user_ip_from_header: "X-Forwarded-For"
+      #- protocol: tls             
+      #  addr: "0.0.0.0:853"
+      #  cert: "/etc/mosdns/yourdomain.cert"  # TLS 所需证书文件。
+      #  key: "/etc/mosdns/yourdomain.key"    # TLS 所需密钥文件。
+      #  idle_timeout: 10          # 连接复用空连接超时时间。单位: 秒。默认: 10。
+
+api:
+    http: "127.0.0.1:9080"

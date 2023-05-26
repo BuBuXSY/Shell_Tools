@@ -1,0 +1,412 @@
+## XSY 定制 ##
+# v5.0.0 分流示例。
+# 这个配置是为了展示各种分流规则！不是为了直接复制粘贴使用！！！！
+# 有疑问先看注释，再翻 wiki。
+
+# 日志
+log:
+  level: warn  # 日志级别。可选 "debug" "info" "warn" "error"。默认 "info"。
+  file: "./mosdns.log" # 记录日志到文件。默认输出至 stderr。
+  production: false # 纯 json 输出。
+
+# API 入口设置
+api:
+   http: "127.0.0.1:9080" # 在该地址启动 api 接口。
+
+# []string, 从其他配置文件载入 plugins 插件设置。
+
+# include 的插件会比本配置文件中的插件先初始化。
+# include: []
+
+plugins:
+  - tag: "cache"
+    type: "cache"
+    args:
+      size: 10240000 # 内置内存缓存大小。单位: 条。默认: 1024。每个 cache 插件的内存缓存是独立的。
+      lazy_cache_ttl: 86400
+  # 将缓存保存在磁盘。插件启动时也会自动从该文件载入缓存。
+  # 缓存将在 mosdns 被关闭时保存。
+      dump_file: ./cache.dump
+  # 自动保存间隔。单位秒。默认 600。
+  # 如果距离上次 dump 有 1024 次更新，则自动保存。
+      dump_interval: 600
+
+  - tag: "hosts"
+    type: "hosts"
+    args:
+      #entries:                         # []string
+      #  - "google.com 108.177.122.113" # 记录
+      files:                           # []string
+        - "./hosts.txt"                # 从外部文件载入。
+
+####################################################################################################################################
+## 广告屏蔽列表
+  - tag: "adlist"
+    type: "domain_set"
+    args:
+      #ips:             # 可以是 IP 或 CIDR。
+      #  - "1.1.1.1"
+      #  - "1.1.1.1/24"
+      files:  # 从文本文件载入
+        - "./rules/ad_domain_list.txt"
+
+## 中国大陆域名
+  - tag: "chinalist"
+    type: "domain_set"
+    args:
+      #exps:                         # 域名表达式。
+      #  - "google.com"
+      #  - "regexp:.+\.google\.com$"
+      files:                        # 从文本文件载入
+        - "./rules/china_domain_list.txt"
+
+
+
+## GFW域名清单
+  - tag: "gfwlist"
+    type: "domain_set"
+    args:
+      #exps:                         # 域名表达式。
+      #  - "google.com"
+      #  - "regexp:.+\.google\.com$"
+      files:                        # 从文本文件载入
+        - "./rules/gfw_domain_list.txt"
+
+
+
+## CDN的域名
+  - tag: "cdncn"
+    type: "domain_set"
+    args:
+      #exps:                         # 域名表达式。
+      #  - "google.com"
+      #  - "regexp:.+\.google\.com$"
+      files:
+        - "./rules/cdn_domain_list.txt"
+
+# 匹配ECSCN域名的插件
+  - tag: "ecscn"
+    type: "domain_set"
+    args:
+      #exps:                         # 域名表达式。
+      #  - "google.com"
+      #  - "regexp:.+\.google\.com$"
+      files:
+        - "./ecs_cn_domain.txt"
+
+# 匹配ECStw域名的插件
+  - tag: "ecstw"
+    type: "domain_set"
+    args:
+      #exps:                         # 域名表达式。
+      #  - "google.com"
+      #  - "regexp:.+\.google\.com$"
+      files:
+        - "./ecs_tw_domain.txt"
+
+## 中国大陆IP
+  - tag: "chinaip"
+    type: "ip_set"
+    args:
+      #ips:             # 可以是 IP 或 CIDR。
+      #  - "1.1.1.1"
+      #  - "1.1.1.1/24"
+      files:  # 从文本文件载入
+        - "./rules/china_ip_list.txt"
+
+## 被GFW墙了的IP
+  - tag: "gfwip"
+    type: "ip_set"
+    args:
+      #ips:             # 可以是 IP 或 CIDR。
+      #  - "1.1.1.1"
+      #  - "1.1.1.1/24"
+      files:  # 从文本文件载入
+        - "./rules/gfw_ip_list.txt"
+
+
+#######################################################################################################  
+
+#######################################################################################################
+  # 转发上游服务器
+  - tag: "upstreams"
+    type: "forward"
+    args:
+      #concurrent: 2   # 并发数。每次请求会从下面配置的 upstreams 里随机选取
+                      # concurrent 个 upstreams 发送请求。取最快返回的应答。超过 3 最多选
+                      # 3 个。默认 1 。
+      upstreams:  # []upstream, 上游服务器。至少要配置一个。
+
+ #####################   Local DNS
+        - tag: Dnspod # 腾讯DNS
+          addr: "tls://1.12.12.12" 
+          enable_pipeline: true
+          idle_timeout: 10
+          max_conns: 5
+          insecure_skip_verify: true
+        
+        - tag: Alidns # 阿里DNS
+          addr: "tls://223.5.5.5" 
+          enable_pipeline: true
+          idle_timeout: 10
+          max_conns: 5
+          insecure_skip_verify: true
+        
+        - tag: 114dns # 114DNS
+          addr: "114.114.114.114" 
+        #  enable_pipeline: true
+        #  idle_timeout: 10
+        #  max_conns: 5
+        #  insecure_skip_verify: true
+
+ #####################   Remote DNS
+    #    - tag: Google # 谷歌DNS
+    #      addr: "tls://8.8.4.4"
+    #      enable_pipeline: true
+    #      idle_timeout: 10
+    #      max_conns: 5
+    #      insecure_skip_verify: true
+
+    #    - tag: Opendns # openDNS
+    #      addr: "https://doh.opendns.com/dns-query"
+    #      enable_pipeline: true
+    #      idle_timeout: 30
+    #      max_conns: 5
+    #      insecure_skip_verify: true
+
+    #    - tag: Cloudflare # Cloudflare
+    #      addr: "https://dns.cloudflare.com/dns-query"
+    #      enable_pipeline: true
+    #      idle_timeout: 30
+    #      max_conns: 5
+    #      insecure_skip_verify: true
+
+        - tag: Oolongcha
+          addr: https://dns.oolongcha.top/dns-query
+          dial_addr: 47.242.79.87
+          max_conns: 2
+   #      enable_pipeline: true
+          idle_timeout: 30
+   #      max_conns: 5
+          insecure_skip_verify: true
+          enable_http3: true
+        
+        - tag: iQdns
+          addr: tcp://115.231.220.34:777
+     #     enable_pipeline: true
+        #  idle_timeout: 30
+        #  max_conns: 5
+        #  insecure_skip_verify: true
+        #  enable_http3: true
+     
+        - tag: Apad
+          addr: "tls://edns.apad.pro"
+          enable_pipeline: true
+          idle_timeout: 10
+          max_conns: 5
+          insecure_skip_verify: true
+
+       # - tag: Quad101 # Quad101
+         # addr: "tls://101.101.101.101"
+         # enable_pipeline: true
+         # idle_timeout: 10
+         # max_conns: 5
+         # insecure_skip_verify: true          
+########################################################################################################
+########################################################################################################
+    # 有响应终止返回
+  - tag: has_resp_sequence
+    type: sequence
+    args:
+      - matches: has_resp
+        exec: accept
+
+  # 调整ECS的插件
+  - tag: ecs_cn
+    type: sequence
+    args:
+      - exec: ecs 101.83.55.25/32
+      - exec: return
+
+  # 调整ECS的插件
+  - tag: ecs_hk
+    type: sequence
+    args:
+      - exec: ecs 47.242.79.87/22
+      - exec: return
+
+  # 本地域名的规则
+  - tag: local_seq
+    type: sequence
+    args:
+      - exec: $ecs_cn
+      - exec: $upstreams Dnspod Alidns 114dns # 只请求 tag 是 dnspod 的上游。不指定 tag 默认请求 $upstreams 中的全部上游。
+      - exec: ttl 300-3600
+  
+  # 境外ipv4优先远程域名的规则
+  - tag: remote_seq
+    type: sequence
+    args:
+      - exec: prefer_ipv4       # 希望 remote 优先 ipv4.
+      - exec: $ecs_hk
+      - exec: $upstreams Apad Oolongcha iQdns
+      - exec: ttl 300-3600  
+
+  # 不要缓存DDNS的域名
+  - tag: local_ddns_query
+    type: sequence
+    args:
+      - matches:
+        - "qname domain:mxsym.cn"
+        exec: $local_seq
+      - exec: ttl 0-0
+    #  - exec: $has_resp_sequence
+
+
+  # 拒绝名单
+  - tag: query_is_reject_domain
+    type: sequence
+    args:
+      # 屏蔽广告域名  
+      - { matches: " qname $adlist " , exec: reject 3 }
+      # 屏蔽TYPE65类型请求                        #
+      - { matches: " qtype 65 " , exec: reject 3 }
+      # 屏蔽LOCAL_PTR和QTYPE12
+      - { matches: " cname in-addr.arpa ip6.arpa " , exec: reject 3 }
+      - { matches: " qtype 12 " , exec: reject 3 }
+        
+
+
+
+############  Fallback ###########################################################################################
+##################################################################################################################
+  #先使用境外 DNS 解析 
+  - tag: local_must_has_cn
+    type: sequence
+    args:
+      - exec: $remote_seq
+      #- exec: prefer_ipv4 
+      #- exec: $upstreams Google Apad Oolongcha iQdns  # 先使用上游境外的 DNS 服务器进行解析
+      - exec: ttl 60-3600
+      - { matches: " resp_ip $chinaip " , exec: drop_resp } # 如解析出中国 IP 就丢弃
+      - { matches: cname akamaiedge.net akadns.net edgekey.net , exec: drop_resp } # 如解析出Akamai IP 就丢弃
+  
+  #先使用国内 DNS 解析 
+  - tag: if_not_cn
+    type: sequence
+    args:
+      - exec: $local_seq
+      - matches:
+        - " !resp_ip $chinaip " # 返回 IP 如果不是 中国区域的 IP 就交给境外解析
+        exec: $remote_seq
+      - matches :
+        - " !has_resp " # 返回 IP 如果是 没有回应 就交给境外解析
+        exec: $remote_seq
+      - matches:
+        - " resp_ip $gfwip "  # 返回 IP 如果是 GFW的 IP 就交给谷歌解析
+        exec: $remote_seq
+  
+  # 利用 fallback 机制按 IP 分流。如果 local 服务器返回了 cn 的应答就接受，非 cn 的应答会被丢弃，使用 remote 服务器的应答。
+  - tag: fallback_ip
+    type: fallback
+    args:
+      primary: local_must_has_cn # 空应答(本地服务器返回了非cn IP然后应答被丢弃了)触发 fallback。
+      secondary: if_not_cn  # fallback 后就会使用 remote 的应答。
+      threshold: 2500
+      always_standby: false
+  ####################################################################
+  # 配置主 sequence 规则，作为服务器的入口。
+  - tag: main
+    type: sequence
+    args:
+  ###### 可视化面板信息采集
+      - exec: metrics_collector metrics
+      - exec: query_summary entry
+##############################
+      # cache/hosts 等插件不再“命中记录自动跳过后续插件”，需用户自行判断是否有应答。
+      - exec: $hosts
+      - exec: jump has_resp_sequence
+      - exec: $local_ddns_query
+      - exec: jump has_resp_sequence
+      - exec: $query_is_reject_domain
+      - exec: $cache
+      - exec: jump has_resp_sequence
+##################################################   
+
+      # 强制用本地服务器解析                                           #
+      - matches: 
+        - " qname $ecscn "
+        exec: goto local_seq
+      
+      # 已知的本地域名用本地服务器解析                                 # 
+      - matches: 
+        - " qname $chinalist "
+        exec: goto local_seq
+      # 已知的本地CDN域名用本地服务器解析
+      - matches: 
+         - " qname $cdncn " 
+        exec: goto local_seq
+##############################################################################
+
+############################################################################     
+      # 已知的污染域名用远程服务器解析 GFW                                    #
+      - matches: 
+        - " qname $gfwlist "
+        exec: goto remote_seq
+
+############################################################################
+
+      - exec: $fallback_ip            # 剩余域名用 ip 分流。
+
+  ####  动态路由 + cache。
+  # 新版的cache只会将命中的应答放在请求，不再自动终止后续规则。所以需要动态路由时，可以将
+  # sequence 的转发操作用  has_wanted_ans 短路。做到每次请求都能刷新路由表。
+#  - tag: s1
+#    type: sequence
+#    args:
+#      - exec: $cache
+#      - matches:
+#          - " has_wanted_ans" # 上一步cache命中缓存有应答了就不转发了。
+#        exec: $forward_remote
+#      - exec: ipset ...... # ipset 每次请求都能执行。
+
+
+  ####### mark 使用示例
+  # mark 在 exec 内是打标。在 matches 内是匹配。
+  # mark 当作开关的示例。
+#  - tag: s1
+#    type: sequence
+#    args:
+#      - exec: mark 1 2  # 先打标。
+#      - matches:
+#          - mark 1
+#        exec: $cache  # 有 mark 1 缓存会生效
+#      - matches:
+#          - mark 2
+#        exec: ecs 1.2.3.4 # 有 mark 2 请求会被附加 ecs
+      # ...
+      # - matches:
+      #     - mark 3
+      #   exec:  jump fastest_cf # 没 mark 3 不会替换 cloudflare ip。
+
+
+  #### 最后配置 server........略
+#  - tag: server
+#    type: udp_server # 目前有 udp/tcp/http_server
+#    args:
+#      entry: main
+#      listen: "127.0.0.1:6653"
+#  - tag: server_tcp
+#    type: tcp_server
+#    args:
+#      entry: main
+#      listen: "127.0.0.1:6653"
+  - tag: server_http
+    type: http_server
+    args:
+      entries:                 # []extry
+        - path: /dns-query     # 本路径执行   
+          exec: main # 可执行插件的 tag。  
+      src_ip_header: "X-Forwarded-For"  # 从 HTTP 头获取用户 IP。
+      listen: "127.0.0.1:9053"  # 监听地址。
+#######        

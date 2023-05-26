@@ -1,0 +1,252 @@
+# Powered by Apad.pro
+# https://apad.pro/easymosdns
+#
+log:
+    file: "./mosdns.log"
+    level: info
+
+data_providers:
+  - tag: hosts
+    file: ./hosts.txt
+    auto_reload: true
+
+plugins:
+  # 缓存的插件
+  - tag: cache
+    type: cache
+    args:
+      size: 102400
+      compress_resp: false # (实验性)(v4.4+)启用应答压缩。大缓存场景可能会稍微降低内存占用。
+                            # 注意: 如果使用 redis 外部缓存，切换该选项必须清空 redis 缓存。 
+      redis: 'redis://127.0.0.1:6379/0'
+  # redis-server 超时阈值。单位: 毫秒。默认: 1000。一般无需修改。
+  # 如果 redis-server 在该时间内无响应，cache 会临时停用缓存。同时间歇性尝试 ping
+  # redis-server，直至再次成功连接。
+      redis_timeout: 1000
+      lazy_cache_ttl: 259200
+      lazy_cache_reply_ttl: 3  # 返回过期应答的 TTL。默认 5
+      cache_everything: true
+
+  # Hosts的插件
+  - tag: hosts
+    type: hosts
+    args:
+      hosts:
+        - "provider:hosts"
+
+  # 调整ECS的插件
+  # [auto|global|cn|tw]
+  - tag: ecs_auto
+    type: ecs
+    args:
+      auto: true
+      mask4: 24
+      force_overwrite: false
+
+
+  # 调整TTL的插件
+  - tag: ttl_short
+    type: ttl
+    args:
+      minimal_ttl: 60
+      maximum_ttl: 3600
+  - tag: ttl_long
+    type: ttl
+    args:
+      minimal_ttl: 600
+      maximum_ttl: 86400
+
+  # 匹配PTR类型请求的插件
+  - tag: query_is_ptr
+    type: query_matcher
+    args:
+      qtype: [12]
+
+  # 匹配TYPE65类型请求的插件
+  - tag: qtype65
+    type: query_matcher
+    args:
+      qtype: [65]
+      
+  # 屏蔽请求的插件
+  - tag: black_hole
+    type: blackhole
+    args:
+      rcode: 0
+      ipv4: "127.0.0.1"
+      ipv6: "::1"
+  
+  # 匹配内网域名的插件
+  - tag: query_is_lan_domain
+    type: query_matcher
+    args:
+      domain:
+        - ".lan"
+
+  # 限制客户端的请求数
+  - tag: client_limit
+    type: "client_limiter"
+    args:
+      max_qps: 100 # 最大 QPS。客户端的请求数超过时，会 REFUSED 然后 _return。
+      v4_mask: 32  # ipv4 的 mask。用于限制整个 IP 段。默认 32。
+      v6_mask: 48  # ipv6 的 mask。默认 48。
+
+  # IP反查域名的插件
+  - tag: reverse_lookup
+    type: reverse_lookup
+    args:
+      size: 65535
+      redis: "redis://localhost:6379/0"
+      ttl: 3600
+      handle_ptr: true
+############################################################################
+
+##########  remote_metrics_collector########################################################################################
+  - tag: Upstreams_met
+    type: metrics_collector
+
+  - tag: Cloudflare_met
+    type: metrics_collector
+
+  - tag: Google_met
+    type: metrics_collector
+
+  - tag: Unbound_met
+    type: metrics_collector
+  # 转发至远程服务器的插件
+###########################################################################################################
+  - tag: forward_Cloudflare
+    type: fast_forward
+    args:
+      upstream:
+        - addr: "tcp://172.64.36.1" # Cloudflare
+         # insecure_skip_verify: true
+          enable_pipeline: true
+
+  - tag: Cloudflare_resolve
+    type: sequence
+    args:
+      exec:
+        - Cloudflare_met #统计
+        - forward_Cloudflare
+######
+  - tag: forward_Google
+    type: fast_forward
+    args:
+      upstream:
+        - addr: "udp://8.8.8.8" # Google
+          #enable_http3: true
+          #enable_pipeline: true
+          #insecure_skip_verify: true
+
+  - tag: Google_resolve
+    type: sequence
+    args:
+      exec:
+        - Google_met #统计
+        - forward_Google
+
+#####
+  - tag: forward_Unbound
+    type: fast_forward
+    args:
+      upstream:
+        - addr: "udp://172.17.0.2" # Ubound
+          #enable_http3: true
+          #enable_pipeline: true
+          insecure_skip_verify: true 
+  
+  - tag: Unbound_resolve
+    type: sequence
+    args:
+      exec:
+        - Unbound_met #统计
+        - forward_Unbound
+
+##############################################################################################################
+  - tag: Upstreams_resolve
+    type: sequence
+    args:
+      exec:
+        - Upstreams_met #统计
+        - primary:
+            - Cloudflare_resolve
+          secondary:
+            - Google_resolve
+            - Unbound_resolve
+          fast_fallback: 50
+          always_standby: false
+
+##########################################################################################
+###metrics_collector，
+  - tag: Finalmet
+    type: metrics_collector
+
+  # 主要的运行逻辑插件
+  # sequence 插件中调用的插件 tag 必须在 sequence 前定义
+  # 否则 sequence 找不到对应插件
+  - tag: main_sequence
+    type: sequence
+    args:
+      exec:
+        # 在 info 级别记录请求。包括请求的域名，类型，客户端地址，应答状态，请求处理时间等。
+        - _query_summary
+        
+        # 统计
+        - Finalmet
+        
+        # 限制客户端的请求数
+        - client_limit    
+        
+        # 域名映射IP
+        - hosts
+
+        # 获取ECS
+        - ecs_auto
+        
+        #  只保留 ECS。
+        - _edns0_filter_ecs_only
+        
+        # IP 反查域名
+        - reverse_lookup
+        
+        # 缓存
+        - cache
+        
+        # 屏蔽TYPE65类型请求
+        - if: qtype65
+          exec:
+          - black_hole
+          - _return
+
+
+        # 屏蔽广告域名
+        - if: "query_is_lan_domain"
+          exec:
+          - _new_nxdomain_response
+          - _return
+        
+        - _prefer_ipv4
+        - Upstreams_resolve 
+        - ttl_long
+
+servers:
+  - exec: main_sequence
+    timeout: 5
+    listeners:
+      #- protocol: udp
+      #  addr: "0.0.0.0:6153"
+      #- protocol: tcp
+       # addr: "0.0.0.0:5553"
+      - protocol: http
+        addr: "127.0.0.1:9053"
+        url_path: "/dns-query"
+        get_user_ip_from_header: "X-Forwarded-For"
+      #- protocol: tls             
+      #  addr: "0.0.0.0:853"
+      #  cert: "/etc/mosdns/yourdomain.cert"  # TLS 所需证书文件。
+      #  key: "/etc/mosdns/yourdomain.key"    # TLS 所需密钥文件。
+      #  idle_timeout: 10          # 连接复用空连接超时时间。单位: 秒。默认: 10。
+
+api:
+    http: "127.0.0.1:9080"

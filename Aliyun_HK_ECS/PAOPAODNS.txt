@@ -1,0 +1,10 @@
+docker run -d \
+--name paopaodns \
+-v /etc/paopaodns:/data \
+-e CNAUTO=no \
+-e CNFALL=no \
+-e UPDATE=daily \
+-e DNS_SERVERNAME=Oolongchadns,Oolongcha.top \
+--restart unless-stopped \
+-p 7753:53/tcp \
+sliamb/paopaodns:latest
