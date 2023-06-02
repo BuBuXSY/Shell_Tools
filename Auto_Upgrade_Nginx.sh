@@ -19,9 +19,9 @@ if [[ "$installed_version" == "$latest_version" ]]; then
 
     read -p "是否要执行强制更新？[Y/n]: " choice
     
-    if [[ "$choice" == "Y" || "$choice" == "y" ]]; then
+    if [[ -z "$choice" || "$choice" == "Y" || "$choice" == "y" ]]; then
 
-    echo "执行更新操作..."
+    echo "执行强制更新操作..."
 
     #  安装所需的依赖
 apt update && apt install build-essential ca-certificates zlib1g-dev libpcre3 libpcre3-dev tar unzip libssl-dev wget curl git cmake  golang clang -y && apt build-dep nginx -y 
