@@ -89,7 +89,7 @@ make clean >/dev/null 2>&1
   --prefix=/etc/nginx \
   --user=nginx \
   --group=nginx \
-#  --modules-path=/usr/lib/nginx/modules \
+  --modules-path=/usr/lib/nginx/modules \
   --conf-path=/etc/nginx/nginx.conf \
   --error-log-path=/var/log/nginx/error.log \
   --http-log-path=/var/log/nginx/access.log \
