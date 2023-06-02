@@ -1,3 +1,4 @@
+/clojars/dt/:clojar+
 ### 网络性能优化 感谢MapleCool大佬提供
 ```
 bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Server_Configure/main/kernel_optimization.sh）
