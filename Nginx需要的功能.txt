@@ -1,4 +1,0 @@
-git clone --depth=1 https://github.com/google/boringssl.git &&
-git clone https://github.com/google/ngx_brotli --recurse-submodules --depth=1
-git clone https://github.com/leev/ngx_http_geoip2_module.git
-hg clone -b quic https://hg.nginx.org/nginx-quic
