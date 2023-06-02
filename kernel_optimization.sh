@@ -116,5 +116,5 @@ echo "net.core.default_qdisc = fq" >>/etc/sysctl.conf
 echo "net.ipv4.tcp_congestion_control = bbr" >>/etc/sysctl.conf
 fi
 
-sysctl -p && clear && . ~/.bashrc && echo "Successful kernel optimization - Powered by apad.pro"
+sysctl -p && clear && . ~/.bashrc && echo -e "\e[1;32mSuccessful kernel optimization - Powered by apad.pro\e[0m"
 lsmod | grep bbr
