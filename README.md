@@ -1,5 +1,5 @@
-### 主用于自己建站
-### 网络性能优化
+
+### 网络性能优化 感谢MapleCool大佬提供
 ```
 bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Server_Configure/main/kernel_optimization.sh）
 ```
