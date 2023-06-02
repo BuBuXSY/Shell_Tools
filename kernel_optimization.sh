@@ -117,3 +117,4 @@ echo "net.ipv4.tcp_congestion_control = bbr" >>/etc/sysctl.conf
 fi
 
 sysctl -p && clear && . ~/.bashrc && echo "Successful kernel optimization - Powered by apad.pro"
+lsmod | grep bbr
