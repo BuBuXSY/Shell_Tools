@@ -1,5 +1,5 @@
-###主用于自己建站
-###网络性能优化
+### 主用于自己建站
+### 网络性能优化
 ```
 curl https://raw.githubusercontent.com/BuBuxsy/Server_Configure/main/kernel_optimization.sh | sh 
 ```
