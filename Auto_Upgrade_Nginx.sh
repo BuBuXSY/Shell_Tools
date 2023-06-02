@@ -12,7 +12,7 @@ apt update && apt install build-essential ca-certificates zlib1g-dev libpcre3 li
 
 # 下载源码
 mkdir -p temp
-
+mkdir -p /var/cache/nginx/client_temp
 cd temp
 
 mkdir -p ext
@@ -58,7 +58,6 @@ pushd ext
 #    [ ! -d libressl ] && libressl_source
     [ ! -d zlib ] && zlib_source
 popd
-
 
 # 进入目录
 if ls $latest_version >/dev/null 2>&1; then
