@@ -18,7 +18,12 @@ cd temp
 mkdir -p ext
 
 latest_version=$(curl -s https://nginx.org/download/ | grep nginx-1.2 | tail -n 1 | awk -F\" '{print $2}' | sed 's/.zip.asc//g')
-
+echo
+installed_version=$(/usr/sbin/nginx -v 2>&1 | grep -oE "nginx/[0-9]+\.[0-9]+\.[0-9]+")
+echo "本地安装的Nginx版本：$installed_version"
+echo
+if [ "$installed_version" = "nginx/$latest_version" ]; then
+    echo "你已经拥有最新的Nginx，不需要更新。" exit
 nginx_source() {
     wget https://nginx.org/download/$latest_version.tar.gz
     tar -zxf $latest_version.tar.gz
