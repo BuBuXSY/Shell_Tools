@@ -5,7 +5,8 @@ https://grafana.bubujun.top/grafana/d/w-Sdzen4k/mosdns-v4?orgId=1&refresh=5s
 ### DNS 仅有DOH支持HTTP/3 只允许CN IP访问  
 ```
 https://doh.bubujun.top/dns-query
-```
+``` 
+#
 #### 网络性能优化 感谢MapleCool大佬提供
 ```
 bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Server_Configure/main/kernel_optimization.sh）
@@ -26,4 +27,5 @@ bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Server_Configure/main/
 ``` 
 bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Server_Configure/main/search_ip.sh)
 ``` 
-####
+#### 
+#
