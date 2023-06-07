@@ -7,7 +7,7 @@ https://grafana.bubujun.top/grafana/d/w-Sdzen4k/mosdns-v4?orgId=1&refresh=5s
 https://doh.bubujun.top/dns-query
 ``` 
 #
-#### 网络性能优化 感谢MapleCool大佬提供
+### 网络性能优化 感谢MapleCool大佬提供
 ```
 bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Server_Configure/main/kernel_optimization.sh）
 ``` 
@@ -23,9 +23,9 @@ bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Server_Configure/main/
 ``` 
 #### 默认保存的文件地址在/usr/share/GeoIP文件夹内(请先提前创建好文件夹mkdir -p /usr/share/GeoIP)也可将本文件，保存在本地之后利用corntab -e 来执行定时更新运行。 0 4 * * *（每天4点运行一次） /root/update_Country.sh 
 #
-#### 用于查询访问自建DNS的IP的并显示其地理位置，用于辨别恶意刷DNS的（需安装nali）
+### 用于查询访问自建DNS的IP的并显示其地理位置，用于辨别恶意刷DNS的
 ``` 
 bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Server_Configure/main/search_ip.sh)
 ``` 
-#### 
+#### 使用前现需要确定安装nali 并且开启nginx的access.log功能
 #
