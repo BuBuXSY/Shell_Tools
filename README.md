@@ -1,6 +1,6 @@
 ### 自建DNS可公益使用，切勿传播，且用且珍惜，华东地区,国内外分流解析 实时监控图
 
-<DNS运行状态实时监控>(https://grafana.bubujun.top/grafana/d/w-Sdzen4k/mosdns-v4?orgId=1&refresh=5s)
+<DNS运行状态实时监控>https://grafana.bubujun.top/grafana/d/w-Sdzen4k/mosdns-v4?orgId=1&refresh=5s
  
 ### DNS 仅有DOH支持HTTP/3 只允许CN IP访问  
 ```
