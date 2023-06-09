@@ -19,15 +19,14 @@ fi
 ln -s "$acme_sh_path" /usr/bin/acme.sh
 
 # 判断系统类型
-os_type=$(uname -a)
-if [[ $os_type == *"OpenWrt"* ]]; then
+if [ -f "/etc/openwrt_release" ]; then
   echo "Detected OpenWrt system"
-  install_cmd="opkg install socat"
-  reload_cmd="service nginx reload"
-elif [[ $os_type == *"Ubuntu"* ]] || [[ $os_type == *"Debian"* ]]; then
+  INSTALL_CMD="opkg install socat"
+  RELOAD_CMD="service nginx reload"
+elif [ -f "/etc/lsb-release" ]; then
   echo "Detected Ubuntu or similar system"
-  install_cmd="apt install -y socat"
-  reload_cmd="service nginx force-reload"
+  INSTALL_CMD="apt install -y socat"
+  RELOAD_CMD="service nginx force-reload"
 else
   echo "Unsupported system"
   exit 1
