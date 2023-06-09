@@ -30,8 +30,10 @@ bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Server_Configure/main/
 #### 使用前现需要确定安装nali 并且开启nginx的access.log功能
 #
 ### 用于查询访问自建DNS的IP的并显示其地理位置，用于辨别恶意刷DNS的
-# 
-### 避免了首次安装时繁琐的复制命令 使用dns TXT安装证书的方式唯一需要做的就是复制TXT内容到DNS解析商 
 ``` shell 
 bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Server_Configure/main/search_ip.sh)
 ```
+# 
+### 避免了首次安装时繁琐的复制命令 使用dns TXT安装证书的方式唯一需要做的就是复制TXT内容到DNS解析商 
+``` shell 
+
