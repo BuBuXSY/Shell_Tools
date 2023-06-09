@@ -1,4 +1,4 @@
-##以下内容都在Debian系的系统上进行，Centos等红帽系，Arch等其他操作系统请自行更改
+## 以下内容都在Debian系的系统上进行，Centos等红帽系，Arch等其他操作系统请自行更改
 ### 自建DNS可公益使用，切勿传播，且用且珍惜，华东地区,国内外分流解析 实时监控图
 
 DNS运行状态实时监控 [点击这里](https://grafana.bubujun.top/grafana/d/w-Sdzen4k/mosdns-v4?orgId=1&refresh=5s)
