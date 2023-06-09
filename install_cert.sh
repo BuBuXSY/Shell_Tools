@@ -42,7 +42,7 @@ if [ -f "/etc/openwrt_release" ]; then
   echo "Detected OpenWrt system"
   INSTALL_CMD="opkg install socat"
   RELOAD_CMD="service nginx reload"
-elif [ -f "/etc/lsb-release" || "$os_type" ]; then
+elif [ -f "/etc/lsb-release" ] || [ "$os_type" ]; then
   echo "Detected Debian series system"
   INSTALL_CMD="apt install -y socat"
   RELOAD_CMD="service nginx force-reload"
