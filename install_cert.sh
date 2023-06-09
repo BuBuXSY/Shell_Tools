@@ -54,7 +54,7 @@ install_certificate() {
   "$acme_sh_path" --issue --keylength ec-256 --dns -d "$domain" --yes-I-know-dns-manual-mode-enough-go-ahead-please
   
   # 判断是否继续安装证书
-  read -p "已完成 $domain 的 TXT 记录解析，是否继续安装证书？(y/n): " answer
+  read -p "请将TXT记录复制到DNS解析商，如果已完成 $domain 的 TXT 记录解析，请选“Y”继续安装证书(y/n): " answer
   if [[ "$answer" != "y" ]] && [[ "$answer" != "Y" ]]; then
     echo "未安装证书：$domain"
     return
