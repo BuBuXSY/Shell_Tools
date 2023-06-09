@@ -36,12 +36,13 @@ fi
 
 
 
-# 判断系统类型
+# 判断系统类型 
+os_type=$(uname -a)
 if [ -f "/etc/openwrt_release" ]; then
   echo "Detected OpenWrt system"
   INSTALL_CMD="opkg install socat"
   RELOAD_CMD="service nginx reload"
-elif [ -f "/etc/lsb-release" ]; then
+elif [ -f "/etc/lsb-release" || "$os_type" ]; then
   echo "Detected Debian series system"
   INSTALL_CMD="apt install -y socat"
   RELOAD_CMD="service nginx force-reload"
@@ -117,7 +118,7 @@ for domain in $domains; do
 done
 
 # 检查证书安装情况
-echo -e "\e[35m\xE2\x9D\xA4证书安装情况\xE2\x9D\xA4\e[0m"
+echo -e "\e[33m\xE2\x9D\xA4证书安装情况\xE2\x9D\xA4\e[0m"
 for domain in $domains; do
   check_certificate "$domain"
 done
