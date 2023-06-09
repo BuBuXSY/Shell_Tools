@@ -184,7 +184,7 @@ install_q_openwrt() {
   tar xf q.tar.gz
 
   # Move 'q' binary to /usr/bin
-  sudo mv q /usr/bin
+  mv q /usr/bin
 
   # Clean up downloaded package and extracted files
   rm q.tar.gz
