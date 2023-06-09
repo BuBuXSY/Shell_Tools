@@ -62,7 +62,7 @@ install_certificate() {
   
   # 安装证书
   "$acme_sh_path" --renew --ecc --dns -d "$domain" --yes-I-know-dns-manual-mode-enough-go-ahead-please
-  "$acme_sh_path" --install-cert -d "$domain" --cert-file "$cert_dir/$domain.crt" --key-file "$cert_dir/$domain.key" --fullchain-file "$cert_dir/$domain.pem" --ecc --reloadcmd "$reload_cmd"
+  "$acme_sh_path" --install-cert -d "$domain" --cert-file "$cert_dir/cert.crt" --key-file "$cert_dir/key.crt" --fullchain-file "$cert_dir/fullchain.pem" --ecc --reloadcmd "$reload_cmd"
 
   echo "已安装证书：$domain"
 }
