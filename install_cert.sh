@@ -24,7 +24,7 @@ if [ -f "/etc/openwrt_release" ]; then
   INSTALL_CMD="opkg install socat"
   RELOAD_CMD="service nginx reload"
 elif [ -f "/etc/lsb-release" ]; then
-  echo "Detected Ubuntu or similar system"
+  echo "Detected Debian series system"
   INSTALL_CMD="apt install -y socat"
   RELOAD_CMD="service nginx force-reload"
 else
