@@ -1,3 +1,4 @@
+##以下内容都在Debian系的系统上进行，Centos等红帽系，Arch等其他操作系统请自行更改
 ### 自建DNS可公益使用，切勿传播，且用且珍惜，华东地区,国内外分流解析 实时监控图
 
 DNS运行状态实时监控 [点击这里](https://grafana.bubujun.top/grafana/d/w-Sdzen4k/mosdns-v4?orgId=1&refresh=5s)
@@ -29,11 +30,13 @@ bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Server_Configure/main/
 ``` 
 #### 使用前现需要确定安装nali 并且开启nginx的access.log功能
 #
-### 用于查询访问自建DNS的IP的并显示其地理位置，用于辨别恶意刷DNS的
+## 用于查询访问自建DNS的IP的并显示其地理位置，用于辨别恶意刷DNS的
 ``` shell 
 bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Server_Configure/main/search_ip.sh)
 ```
 # 
-### 避免了首次安装时繁琐的复制命令 使用dns TXT安装证书的方式唯一需要做的就是复制TXT内容到DNS解析商 
+## 避免了首次安装时繁琐的复制命令 使用dns TXT安装证书的方式唯一需要做的就是复制TXT内容到DNS解析商 
 ``` shell 
-
+bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Server_Configure/main/install_cert.sh)
+``` 
+#
