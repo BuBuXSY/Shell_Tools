@@ -3,6 +3,8 @@
 # 定义变量
 acme_sh_path="$HOME/.acme.sh/acme.sh"
 cert_dir="/etc/nginx/cert_file"
+link_target="/usr/bin/acme.sh"
+link_source="$acme_sh_path"
 
 # 安装 acme.sh
 if [ ! -d "$HOME/.acme.sh" ]; then
@@ -15,8 +17,25 @@ fi
 # 切换默认 CA 为 Let's Encrypt
 "$acme_sh_path" --set-default-ca --server letsencrypt
 
-# 添加软链接
-ln -s "$acme_sh_path" /usr/bin/acme.sh
+
+
+# 检查软链接是否已经存在
+if [ -L "$link_target" ] && [ -e "$link_target" ]; then
+  existing_target=$(readlink "$link_target")
+  
+  if [ "$existing_target" = "$link_source" ]; then
+    echo -e "\e[32m软链接已存在，无需创建：$link_target\e[0m"
+    # 可选：在这里执行其他操作
+    exit 0
+  else
+    echo -e "\e[31m存在不同的软链接目标，取消软链接：$link_target\e[0m"
+    rm "$link_target"
+  fi
+fi
+
+# 创建软链接
+ln -s "$link_source" "$link_target"
+echo -e "\e[32m已创建软链接：$link_target\e[0m"
 
 # 判断系统类型
 if [ -f "/etc/openwrt_release" ]; then
