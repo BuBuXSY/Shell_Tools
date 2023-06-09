@@ -10,7 +10,7 @@ https://doh.bubujun.top/dns-query
 #
 ### 网络性能优化 感谢MapleCool大佬提供 ###
 ``` shell
-bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Server_Configure/main/kernel_optimization.sh）
+bash <(curl -Ls raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/kernel_optimization.sh）
 ``` 
 #
 ### 适用于Debian系的自动更新Nginx脚本加入了QUIC Brotli OCSP GEOIP2 KTLS的支持 感谢Zhang Xin提供 并由BuBuXSY进行修改	
