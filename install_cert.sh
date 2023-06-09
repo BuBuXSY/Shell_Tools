@@ -28,13 +28,13 @@ if [ -L "$link_target" ] && [ -e "$link_target" ]; then
     # 可选：在这里执行其他操作
   else
     echo -e "\e[31m存在不同的软链接目标，移除软链接：$link_target\e[0m"
-    rm "$link_target"
+    rm "$link_target" # 创建软链接
+    ln -s "$link_source" "$link_target"
+    echo -e "\e[32m已创建软链接：$link_target\e[0m"
   fi
 fi
 
-# 创建软链接
-ln -s "$link_source" "$link_target"
-echo -e "\e[32m已创建软链接：$link_target\e[0m"
+
 
 # 判断系统类型
 if [ -f "/etc/openwrt_release" ]; then
