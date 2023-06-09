@@ -8,7 +8,7 @@ DNS运行状态实时监控 [点击这里](https://grafana.bubujun.top/grafana/d
 https://doh.bubujun.top/dns-query
 ``` 
 #
-### 网络性能优化 感谢MapleCool大佬提供
+** 网络性能优化 感谢MapleCool大佬提供 **
 ``` shell
 bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Server_Configure/main/kernel_optimization.sh）
 ``` 
