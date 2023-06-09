@@ -1,4 +1,5 @@
-## <font style="color: rgb(200,100,100)">各类一键脚本，把复杂的东西简单化</font> <font style="color: red">（以下内容都在Debian系和Openwrt系统上进行测试，Centos等红帽系，Arch等其他操作系统部分支持如不支持请自行更改）</font>
+## 
+<font style="color: rgb(200,100,100)">各类一键脚本，把复杂的东西简单化</font> <font style="color: red">（以下内容都在Debian系和Openwrt系统上进行测试，Centos等红帽系，Arch等其他操作系统部分支持如不支持请自行更改）</font>
 ### 自建DNS可公益使用，切勿传播，且用且珍惜，华东地区,国内外分流解析 实时监控图
 
 DNS运行状态实时监控 [点击这里](https://grafana.bubujun.top/grafana/d/w-Sdzen4k/mosdns-v4?orgId=1&refresh=5s)
