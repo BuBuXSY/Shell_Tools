@@ -27,7 +27,7 @@ if [ -L "$link_target" ] && [ -e "$link_target" ]; then
     echo -e "\e[32m软链接已存在，无需创建：$link_target\e[0m"
     # 可选：在这里执行其他操作
   else
-    echo -e "\e[31m存在不同的软链接目标，取消软链接：$link_target\e[0m"
+    echo -e "\e[31m存在不同的软链接目标，移除软链接：$link_target\e[0m"
     rm "$link_target"
   fi
 fi
