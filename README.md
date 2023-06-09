@@ -35,8 +35,8 @@ bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Server_Configure/main/
 bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Server_Configure/main/search_ip.sh)
 ```
 # 
-## 避免了首次安装时繁琐的复制命令 使用dns TXT安装证书的方式唯一需要做的就是复制TXT内容到DNS解析商 
+### 一键安装服务器证书（默认ECC & let's encrypt） 
 ``` shell 
 bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Server_Configure/main/install_cert.sh)
 ``` 
-#
+#### 避免了首次安装时繁琐的复制命令 使用dns TXT安装证书的方式唯一需要做的就是复制TXT内容到DNS解析商 
