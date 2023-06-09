@@ -6,10 +6,10 @@ cert_dir="/etc/nginx/cert_file"
 
 # 安装 acme.sh
 if [ ! -d "$HOME/.acme.sh" ]; then
-  echo "未安装.acme.sh，正在安装..."
+  echo -e "\e[31m未安装acme.sh，正在安装...\e[0m"
   curl https://get.acme.sh | sh
-else
-  echo "已安装.acme.sh"
+else 
+  echo -e "\e[32m已安装.acme.sh\e[0m"
 fi
 
 # 切换默认 CA 为 Let's Encrypt
@@ -35,7 +35,7 @@ fi
 
 # 安装 socat（如果未安装）
 if ! command -v socat >/dev/null 2>&1; then
-  echo "socat not found, installing..."
+  echo -e "\e[31m未安装socat，正在安装...\e[0m"
   eval "$install_cmd"
 fi
 
@@ -48,13 +48,13 @@ install_certificate() {
 # 检查证书是否已经安装
   cert_file="$cert_dir/cert.crt"
   if [ -f "$cert_file" ]; then
-    echo "证书已经安装：$domain"
+    echo -e "\e[31m证书已经安装\e[0m：$domain"
     read -p "证书已存在，是否强制更新？(y/n): " answer
     if [[ "$answer" == "y" ]] || [[ "$answer" == "Y" ]]; then
       "$acme_sh_path" --force --renew --ecc --dns -d "$domain" --yes-I-know-dns-manual-mode-enough-go-ahead-please
-      echo "已更新证书：$domain"
+      echo -e "\e[32m已更新证书\e[0m：$domain"
     else
-      echo "未更新证书：$domain"
+      echo -e "\e[31m未更新证书\e[0m：$domain"
     fi
     return
   fi
@@ -82,9 +82,9 @@ check_certificate() {
   cert_file="$cert_dir/cert.crt"
   
   if [ -f "$cert_file" ]; then
-    echo "已安装证书：$domain"
+    echo -e "\e[32m已安装证书\e[0m：$domain"
   else
-    echo "未安装证书：$domain"
+    echo -e "\e[31m未安装证书\e[0m：$domain"
   fi
 }
 
@@ -92,7 +92,7 @@ check_certificate() {
 mkdir -p "$cert_dir"
 
 # 安装证书
-echo "请输入要安装的域名（多个域名请使用空格分隔）："
+echo -e "\e[32m请输入要安装的域名（多个域名请使用空格分隔）：\e[0m"
 read -r domains
 
 for domain in $domains; do
@@ -100,7 +100,7 @@ for domain in $domains; do
 done
 
 # 检查证书安装情况
-echo "已安装的证书："
+echo -e "\e[32m已安装的证书\e[0m："
 for domain in $domains; do
   check_certificate "$domain"
 done
