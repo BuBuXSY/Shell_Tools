@@ -81,10 +81,6 @@ test_edns_support() {
     https://dns.adguard-dns.com/dns-query
     tls://dns.adguard-dns.com
     quic://dns.adguard-dns.com
-    # bubujun
-    https://doh.bubujun.top/dns-query
-    # oolongcha
-    https://dns.oolongcha.top/dns-query
     )
 
 	commandline="q A '--subnet='$subnet'' --timeout=5s -t txt o-o.myaddr.l.google.com -s @DNS_SERVER -S 2>/dev/null"
