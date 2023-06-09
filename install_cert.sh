@@ -44,7 +44,7 @@ install_certificate() {
   domain="$1"
   
   # 检查证书是否已经安装
-  cert_file="$cert_dir/$domain.crt"
+  cert_file="$cert_dir/cert.crt"
   if [ -f "$cert_file" ]; then
     echo "证书已经安装：$domain"
     return
@@ -70,7 +70,7 @@ install_certificate() {
 # 定义函数：检查证书安装情况
 check_certificate() {
   domain="$1"
-  cert_file="$cert_dir/$domain.crt"
+  cert_file="$cert_dir/cert.crt"
   
   if [ -f "$cert_file" ]; then
     echo "已安装证书：$domain"
