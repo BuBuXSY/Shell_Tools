@@ -10,35 +10,35 @@ https://doh.bubujun.top/dns-query
 #
 ### 网络性能优化 感谢MapleCool大佬提供 ###
 ``` shell
-bash <(curl -Ls raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/kernel_optimization.sh）
+bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/kernel_optimization.sh）
 ``` 
 #
 ### 适用于Debian系的自动更新Nginx脚本加入了QUIC Brotli OCSP GEOIP2 KTLS的支持 感谢Zhang Xin提供 并由BuBuXSY进行修改	
 ``` bash
-bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Server_Configure/main/Auto_Upgrade_Nginx.sh)
+bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/Auto_Upgrade_Nginx.sh)
 ``` 
 #
 ### 更新Country.mmdb给nginx用
 ``` shell 
-bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Server_Configure/main/update_Country.sh)
+bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/update_Country.sh)
 ```
 #### 默认保存的文件地址在/usr/share/GeoIP文件夹内(请先提前创建好文件夹mkdir -p /usr/share/GeoIP)也可将本文件，保存在本地之后利用corntab -e 来执行定时更新运行。 0 4 * * *（每天4点运行一次） /root/update_Country.sh 
 #
 ### 用于查询访问自建DNS的IP的并显示其地理位置，用于辨别恶意刷DNS的
 ``` shell 
-bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Server_Configure/main/search_ip.sh)
+bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/search_ip.sh)
 ``` 
 #### 使用前现需要确定安装 [nali](https://github.com/zu1k/nali) 并且开启nginx的access.log功能
 # 
 ### 一键安装服务器证书（默认ECC & let's encrypt） 
 ``` shell 
-bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Server_Configure/main/install_cert.sh)
+bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/install_cert.sh)
 ``` 
 #### 避免了首次安装时繁琐的复制命令 使用dns TXT安装证书的方式唯一需要做的就是复制TXT内容到DNS解析商 
 # 
 
 ### 用来测试DNS服务器是否支持ENDS 
 ``` shell  
-bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Server_Configure/main/DNS_TEST.sh) 
+bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/EDNS_TEST.sh) 
 ``` 
 #### 本脚本需要 [q](https://github.com/natesales/q) 的支持 脚本运行时会自动判断系统 自动安装 支持Debian系 RedHat系 Openwrt系 MacOS（M1/2）
