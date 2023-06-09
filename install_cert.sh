@@ -99,7 +99,7 @@ for domain in $domains; do
 done
 
 # 检查证书安装情况
-echo -e "\xE2\x9D\xA4证书安装情况：\xE2\x9D\xA4"
+echo -e "\e[35m\xE2\x9D\xA4证书安装情况\xE2\x9D\xA4\e[0m"
 for domain in $domains; do
   check_certificate "$domain"
 done
