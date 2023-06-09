@@ -35,3 +35,10 @@ bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Server_Configure/main/
 bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Server_Configure/main/install_cert.sh)
 ``` 
 #### 避免了首次安装时繁琐的复制命令 使用dns TXT安装证书的方式唯一需要做的就是复制TXT内容到DNS解析商 
+# 
+
+### 此脚本用来测试DNS服务器是否支持ENDS 
+``` shell  
+bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Server_Configure/main/DNS_TEST.sh) 
+``` 
+#### 本脚本需要 [q](https://github.com/natesales/q)的支持 脚本运行时会自动判断系统 自动安装 支持Debian系 RedHat系 Openwrt系 MacOS（）
