@@ -34,7 +34,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/searc
 ``` shell 
 bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/install_cert.sh)
 ``` 
-#### 避免了首次安装时繁琐的复制命令 使用dns TXT安装证书的方式唯一需要做的就是复制TXT内容到DNS解析商 
+#### 避免了首次安装时繁琐的复制命令 使用DNS TXT安装证书的方式唯一需要做的就是复制TXT内容到DNS解析商（默认NGINX） 
 # 
 
 ### 用来测试DNS服务器是否支持ENDS 
