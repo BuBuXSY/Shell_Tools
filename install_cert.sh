@@ -46,8 +46,8 @@ install_certificate() {
   domain="$1"
   
 # 检查证书是否已经安装
-  cert_file="$cert_dir/cert.crt"
-  if [ -f "$cert_file" ]; then
+  samecert_file="$HOME/.acme.sh/${domain}_ecc" 
+  if [ -d "$samecert_file" ]; then
     echo -e "\e[31m证书已经安装\e[0m：$domain"
     read -p "证书已存在，是否强制更新？(y/n): " answer
     if [[ "$answer" == "y" ]] || [[ "$answer" == "Y" ]]; then
