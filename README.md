@@ -28,7 +28,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Server_Configure/main/
 ``` shell 
 bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Server_Configure/main/search_ip.sh)
 ``` 
-#### 使用前现需要确定安装[nali](zu1k/nali: 一个查询IP地理信息和CDN服务提供商的离线终端工具.An offline tool for querying IP geographic information and CDN provider. (github.com)) 并且开启nginx的access.log功能
+#### 使用前现需要确定安装[nali](https://github.com/zu1k/nali) 并且开启nginx的access.log功能
 # 
 ### 一键安装服务器证书（默认ECC & let's encrypt） 
 ``` shell 
