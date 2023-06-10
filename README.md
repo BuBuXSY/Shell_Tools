@@ -28,6 +28,9 @@ bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/updat
 ``` shell 
 bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/search_ip.sh)
 ``` 
+``` shell
+bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/search_banip.sh)
+```
 #### 使用前现需要确定安装 [nali](https://github.com/zu1k/nali) 并且开启nginx的access.log功能
 # 
 ### 一键安装服务器证书（默认ECC & let's encrypt） 
