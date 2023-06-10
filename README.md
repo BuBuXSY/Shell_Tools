@@ -18,7 +18,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/kerne
 bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/Auto_Upgrade_Nginx.sh)
 ``` 
 #
-### 更新Country.mmdb给nginx用
+### 更新Country.mmdb给nginx的GEOIP2模块用
 ``` shell 
 bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/update_Country.sh)
 ```
