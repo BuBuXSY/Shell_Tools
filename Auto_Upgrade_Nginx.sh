@@ -54,11 +54,11 @@ pcre2_source() {
 }
 
 quictls_source() {
-    git clone https://github.com/quictls/openssl -b openssl-3.0.8+quic quictls --recurse-submodules --depth=1 
+    git clone https://github.com/quictls/openssl -b openssl-3.0.9+quic quictls --recurse-submodules --depth=1 
 }
 
 #libressl_source(){
-#	curl -sL https://ftp.openbsd.org/pub/OpenBSD/LibreSSL/libressl-3.7.2.tar.gz | tar --strip-components 1 -C ./libressl -xzvf -
+#	curl -sL https://ftp.openbsd.org/pub/OpenBSD/LibreSSL/libressl-3.8.0.tar.gz | tar --strip-components 1 -C ./libressl -xzvf -
 #} 
 	
 zlib_source() {
