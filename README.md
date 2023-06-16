@@ -50,5 +50,5 @@ bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/EDNS_
 ``` shell 
 bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/collect_repeat_dns.sh)
 ``` 
-### 需要[MOSDNS](https://github.com/IrineSistiana/mosdns)使用，并开启mosdns.log（建议选择debug）使用，如需定时可类似于 0 */12 * * * /etc/mosdns/collect_repeat_dns.sh
+#### 需要[MOSDNS](https://github.com/IrineSistiana/mosdns)使用，并开启mosdns.log（建议选择debug）使用，如需定时可类似于 0 */12 * * * /etc/mosdns/collect_repeat_dns.sh
 #
