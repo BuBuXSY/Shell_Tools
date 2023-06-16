@@ -45,3 +45,11 @@ bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/insta
 bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/EDNS_TEST.sh) 
 ``` 
 #### 本脚本需要 [q](https://github.com/natesales/q) 的支持 脚本运行时会自动判断系统 自动安装 支持Debian系 RedHat系 Openwrt系 MacOS（M1/2）
+#
+### 定时mosdns的重复域名，将重复域名的TTL时间变成减少mosdns作为公共服务器时的使用负担
+``` shell 
+bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/collect_repeat_dns.sh)
+``` 
+###
+需配合[MOSDNS](https://github.com/IrineSistiana/mosdns)使用，并开启mosdns.log（建议选择debug）使用
+#
