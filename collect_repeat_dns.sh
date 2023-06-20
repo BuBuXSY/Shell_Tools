@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 删除已存在的repeat_domain.txt文件
-rm -r /etc/mosdns/rules/repeat_domain.txt
+#rm -r /etc/mosdns/rules/repeat_domain.txt
 
 # 读取包含域名的文本文件，每行一个域名
 domain_file="/etc/mosdns/mosdns.log"
