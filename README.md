@@ -47,5 +47,5 @@ bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/EDNS_
 ``` shell 
 bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/collect_repeat_dns.sh)
 ``` 
-#### 需要搭配 [MOSDNS](https://github.com/IrineSistiana/mosdns) 使用，并开启mosdns.log（建议选择info，并且日志默认位置在/etc/mosdns/mosdns.log）使用，如需定时可类似于 0 */12 * * * /etc/mosdns/collect_repeat_dns.sh（mosdns。log的大小不用担心，脚本会定时自动删除mosdns.log）
+#### 需要搭配 [MOSDNS](https://github.com/IrineSistiana/mosdns) 使用，并开启mosdns.log（建议选择info，并且日志默认位置在/etc/mosdns/mosdns.log，默认规则存放地址为/etc/mosdns/rules/下）使用，如需定时可类似于 0 */12 * * * /etc/mosdns/collect_repeat_dns.sh（mosdns。log的大小不用担心，脚本会定时自动删除mosdns.log）
 #
