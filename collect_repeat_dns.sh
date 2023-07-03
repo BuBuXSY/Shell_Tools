@@ -18,23 +18,25 @@ grep -oE '"qname": "([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})' "$domain_file" | sed 's/"qna
 # 从临时文件中读取结果，并生成域名列表
 # 同时将重复次数超过阈值的域名保存到输出文件
 echo "#重复域名列表：" > "$output_file"
+duplicate_domains=0
 while read -r line; do
   count=$(echo "$line" | awk '{print $1}')
   domain=$(echo "$line" | awk '{print $2}')
-  echo "full:$domain" >> "$output_file"
   if (( count > threshold )); then
     echo "full:$domain" >> "$output_file"
+    duplicate_domains=1
   fi
 done < temp.txt
 
 # 删除临时文件
 rm temp.txt
 
-# 检查重复域名的数量是否小于阈值，给出相应的提示
-if ((duplicate_domains < threshold)); then
-  echo "发现的重复域名数量少于阈值。"
-else
+# 检查是否存在重复域名超过阈值的情况，给出相应的提示
+if ((duplicate_domains == 1)); then
   echo "查询完成，请查看 $output_file 文件。"
   # 清空日志文件
   cat /dev/null > "$domain_file"
+else
+  echo "发现的重复域名数量少于阈值。"
+  rm "$output_file"  # 删除输出文件
 fi
