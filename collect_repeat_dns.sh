@@ -1,6 +1,5 @@
 #!/bin/bash
 
-
 # 读取包含域名的文本文件，每行一个域名
 domain_file="/etc/mosdns/mosdns.log"
 
@@ -8,14 +7,13 @@ domain_file="/etc/mosdns/mosdns.log"
 output_file="/etc/mosdns/rules/repeat_domain.txt"
 
 # 设置重复次数的阈值
-threshold=1000
+threshold=2000
 
 # 使用grep和正则表达式获取 "qname" 之后的域名
 # 排除数字、日期和标点符号，只查询域名网址
 # 使用sort和uniq -c对结果进行统计和排序
 # 结果保存到临时文件temp.txt
-grep -oE '"qname": "([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})' "$domain_file" | sed 's/"qname": "//' | sort | uniq -c | sort -rn > temp.txt
-
+grep -oE '"qname": "([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})' "$domain_file" | sed 's/"qname": "//' | grep -v "in-addr.arpa" | sort | uniq -c | sort -rn > temp.txt
 
 # 从临时文件中读取结果，并生成域名列表
 # 同时将重复次数超过阈值的域名保存到输出文件
