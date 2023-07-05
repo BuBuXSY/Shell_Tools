@@ -10,7 +10,7 @@ https://doh.bubujun.top/dns-query
 #
 ### 网络性能优化 感谢MapleCool大佬提供 ###
 ``` shell
-bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/kernel_optimization.sh）
+bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/kernel_optimization.sh)
 ``` 
 #
 ### 适用于Debian系的一键自动更新Nginx脚本加入了QUIC Brotli OCSP GEOIP2 KTLS的支持 感谢Zhang Xin提供 并由BuBuXSY进行修改	
@@ -51,7 +51,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/colle
 #
 ### Frp的更新安装脚本，支持amd64与arm64，脚本会自行进行判断且安装最新版本的frp，用户可选择安装frps还是frpc，升级不需要选择会自行判断
 ```shell
-bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/update_frp.sh）
+bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/update_frp.sh)
 ```
 #
 
