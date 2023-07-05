@@ -44,14 +44,22 @@ if [[ -n "$frp_version" ]]; then
                 echo "无效的安装类型"
                 exit 1
             fi
-
-            # 解码链接中的编码字符
+                   # 判断系统架构
+                   architecture=$(uname -m)
+                   if [[ "$architecture" == "x86_64" ]]; then
+                    platform="amd64"
+                   elif [[ "$architecture" == "aarch64" ]]; then
+                    platform="arm64"
+                   else
+                    echo "不支持的系统架构: $architecture"
+                   exit 1
+                   fi
+                    # 解码链接中的编码字符
 		    decoded_version=$(echo -e "$latest_version")
 		    download_url="https://github.com/fatedier/frp/releases/download/v${decoded_version}/frp_${latest_version}_linux_${platform}.tar.gz"
 
 		    # 获取下载文件名
 		    file_name=$(basename "$download_url")
-
 
 		    # 创建安装目录
 		    sudo mkdir -p "$install_dir"
@@ -93,9 +101,6 @@ else
     echo "无效的选择"
     exit 1
 fi
-
-# 显示系统架构
-echo "系统架构: $architecture"
 
 # 判断系统架构
 architecture=$(uname -m)
