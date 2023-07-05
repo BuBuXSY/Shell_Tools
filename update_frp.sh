@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 设置安装目录
-install_dir="/usr/local/frp"
+install_dir="/usr/bin/"
 
 
 # 获取最新版本号
@@ -11,7 +11,7 @@ latest_version=$(curl -sL "https://github.com/fatedier/frp/releases/latest" | gr
 latest_version=${latest_version#v}
 
 # 检查系统是否已安装frp
-frp_version=$(/usr/local/frp/frps --version 2>/dev/null || /usr/local/frp/frpc --version 2>/dev/null)
+frp_version=$(frps --version 2>/dev/null || frpc --version 2>/dev/null)
 if [[ -n "$frp_version" ]]; then
     echo "系统已安装frp，当前版本为: $frp_version"
 
@@ -29,9 +29,9 @@ if [[ -n "$frp_version" ]]; then
 
             # 获取已安装的frp类型
             installed_type=""
-            if [[ -x "/usr/local/frp/frps" ]]; then
+            if [[ -x "/usr/bin/frps" ]]; then
                 installed_type="frps"
-            elif [[ -x "/usr/local/frp/frpc" ]]; then
+            elif [[ -x "/usr/bin/frpc" ]]; then
                 installed_type="frpc"
             fi
 
