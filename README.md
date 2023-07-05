@@ -50,9 +50,9 @@ bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/colle
 #### 需要搭配 [MOSDNS](https://github.com/IrineSistiana/mosdns) 使用，并开启mosdns.log（建议选择info，并且日志默认位置在/etc/mosdns/mosdns.log，默认规则存放地址为/etc/mosdns/rules/下）使用，如需定时可类似于 0 */12 * * * /etc/mosdns/collect_repeat_dns.sh（mosdns。log的大小不用担心，脚本会定时自动删除mosdns.log）
 #
 ### Frp的更新安装脚本，暂时且支持amd64与arm64，脚本会自行进行判断且安装最新版本的frp，用户可选择安装frps还是frpc，升级不需要选择会自行判断
-··· shell
+```shell
 bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/update_frp.sh）
-···
+```
 #
 
 
