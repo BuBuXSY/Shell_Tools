@@ -55,7 +55,7 @@ pcre2_source() {
 }
 
 quictls_source() {
-    git clone https://github.com/quictls/openssl -b openssl-3.0.9+quic quictls --recurse-submodules --depth=1 
+    git clone https://github.com/quictls/openssl -b openssl-3.0.8+quic quictls --recurse-submodules --depth=1 
 }
 
 #libressl_source(){
@@ -211,7 +211,7 @@ pcre2_source() {
 }
 
 quictls_source() {
-    git clone https://github.com/quictls/openssl -b openssl-3.0.9+quic quictls --recurse-submodules --depth=1 
+    git clone https://github.com/quictls/openssl -b openssl-3.0.8+quic quictls --recurse-submodules --depth=1 
 }
 
 #libressl_source(){
