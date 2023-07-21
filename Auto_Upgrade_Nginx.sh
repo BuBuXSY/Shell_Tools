@@ -48,11 +48,11 @@ ngx_http_geoip2_module_source() {
     git clone https://github.com/leev/ngx_http_geoip2_module --depth=1
 }
 
-pcre2_source() { 
+#pcre2_source() { 
     #git clone https://github.com/PCRE2Project/pcre2.git --recurse-submodules --depth=1
-    wget https://github.com/PCRE2Project/pcre2/releases/download/pcre2-10.42/pcre2-10.42.tar.gz --no-check-certificate
-    tar -zxf pcre2-10.42.tar.gz && mv pcre2-10.42 pcre2 && rm -f pcre2-10.42.tar.gz
-}
+#    wget https://github.com/PCRE2Project/pcre2/releases/download/pcre2-10.42/pcre2-10.42.tar.gz --no-check-certificate
+#    tar -zxf pcre2-10.42.tar.gz && mv pcre2-10.42 pcre2 && rm -f pcre2-10.42.tar.gz
+#}
 
 quictls_source() {
     git clone https://github.com/quictls/openssl -b openssl-3.0.9+quic quictls --recurse-submodules --depth=1 
@@ -70,7 +70,7 @@ zlib_source() {
 pushd ext
     [ ! -d ngx_brotli ] && ngx_brotli_source
     [ ! -d ngx_http_geoip2_module ] && ngx_http_geoip2_module_source
-    [ ! -d pcre2 ] && pcre2_source
+#    [ ! -d pcre2 ] && pcre2_source
     [ ! -d quictls ] && quictls_source
 #    [ ! -d libressl ] && libressl_source
     [ ! -d zlib ] && zlib_source
@@ -204,11 +204,11 @@ ngx_http_geoip2_module_source() {
     git clone https://github.com/leev/ngx_http_geoip2_module --depth=1
 }
 
-pcre2_source() { 
+#pcre2_source() { 
     #git clone https://github.com/PCRE2Project/pcre2.git --recurse-submodules --depth=1
-    wget https://github.com/PCRE2Project/pcre2/releases/download/pcre2-10.42/pcre2-10.42.tar.gz --no-check-certificate
-    tar -zxf pcre2-10.42.tar.gz && mv pcre2-10.42 pcre2 && rm -f pcre2-10.42.tar.gz
-}
+#    wget https://github.com/PCRE2Project/pcre2/releases/download/pcre2-10.42/pcre2-10.42.tar.gz --no-check-certificate
+#    tar -zxf pcre2-10.42.tar.gz && mv pcre2-10.42 pcre2 && rm -f pcre2-10.42.tar.gz
+#}
 
 quictls_source() {
     git clone https://github.com/quictls/openssl -b openssl-3.0.9+quic quictls --recurse-submodules --depth=1 
@@ -226,7 +226,7 @@ zlib_source() {
 pushd ext
     [ ! -d ngx_brotli ] && ngx_brotli_source
     [ ! -d ngx_http_geoip2_module ] && ngx_http_geoip2_module_source
-    [ ! -d pcre2 ] && pcre2_source
+#    [ ! -d pcre2 ] && pcre2_source
     [ ! -d quictls ] && quictls_source
 #    [ ! -d libressl ] && libressl_source
     [ ! -d zlib ] && zlib_source
@@ -290,7 +290,7 @@ make clean >/dev/null 2>&1
   --with-openssl-opt='enable-tls1_3' \
   --with-openssl-opt='enable-ktls' \
   --with-openssl="../ext/quictls" \
-  --with-pcre-jit \ #="../ext/pcre2" \
+  --with-pcre-jit \
   --with-zlib="../ext/zlib" \
   --add-module="../ext/ngx_brotli" \
   --add-module="../ext/ngx_http_geoip2_module" \
