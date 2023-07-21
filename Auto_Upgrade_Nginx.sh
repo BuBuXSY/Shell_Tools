@@ -204,17 +204,18 @@ ngx_http_geoip2_module_source() {
     git clone https://github.com/leev/ngx_http_geoip2_module --depth=1
 }
 
-pcre2_source() {
-    wget https://github.com/PCRE2Project/pcre2/releases/download/pcre2-10.42/pcre2-10.42.tar.gz --no-check-certificate
-    tar -zxf pcre2-10.42.tar.gz && mv pcre2-10.42 pcre2 && rm -f pcre2-10.42.tar.gz
+pcre2_source() { 
+    git clone https://github.com/PCRE2Project/pcre2.git --recurse-submodules --depth=1
+    #wget https://github.com/PCRE2Project/pcre2/releases/download/pcre2-10.42/pcre2-10.42.tar.gz --no-check-certificate
+    #tar -zxf pcre2-10.42.tar.gz && mv pcre2-10.42 pcre2 && rm -f pcre2-10.42.tar.gz
 }
 
 quictls_source() {
-    git clone https://github.com/quictls/openssl -b openssl-3.0.8+quic quictls --recurse-submodules --depth=1 
+    git clone https://github.com/quictls/openssl -b openssl-3.0.9+quic quictls --recurse-submodules --depth=1 
 }
 
 #libressl_source(){
-#	curl -sL https://ftp.openbsd.org/pub/OpenBSD/LibreSSL/libressl-3.7.2.tar.gz | tar --strip-components 1 -C ./libressl -xzvf -
+#	curl -sL https://ftp.openbsd.org/pub/OpenBSD/LibreSSL/libressl-3.8.0.tar.gz | tar --strip-components 1 -C ./libressl -xzvf -
 #} 
 	
 zlib_source() {
