@@ -133,7 +133,7 @@ make clean >/dev/null 2>&1
   --with-openssl-opt='enable-tls1_3' \
   --with-openssl-opt='enable-ktls' \
   --with-openssl="../ext/quictls" \
-  --with-pcre-jit \ #="../ext/pcre2" \
+  --with-pcre-jit \
   --with-zlib="../ext/zlib" \
   --add-module="../ext/ngx_brotli" \
   --add-module="../ext/ngx_http_geoip2_module" \
