@@ -49,9 +49,9 @@ ngx_http_geoip2_module_source() {
 }
 
 pcre2_source() { 
-    git clone https://github.com/PCRE2Project/pcre2.git --recurse-submodules --depth=1
-    #wget https://github.com/PCRE2Project/pcre2/releases/download/pcre2-10.42/pcre2-10.42.tar.gz --no-check-certificate
-    #tar -zxf pcre2-10.42.tar.gz && mv pcre2-10.42 pcre2 && rm -f pcre2-10.42.tar.gz
+    #git clone https://github.com/PCRE2Project/pcre2.git --recurse-submodules --depth=1
+    wget https://github.com/PCRE2Project/pcre2/releases/download/pcre2-10.42/pcre2-10.42.tar.gz --no-check-certificate
+    tar -zxf pcre2-10.42.tar.gz && mv pcre2-10.42 pcre2 && rm -f pcre2-10.42.tar.gz
 }
 
 quictls_source() {
