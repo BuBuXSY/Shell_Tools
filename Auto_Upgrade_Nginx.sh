@@ -49,7 +49,7 @@ ngx_http_geoip2_module_source() {
 }
 
 pcre2_source() { 
-    git clone https://github.com/PCRE2Project/pcre2.git --recurse-submodules #--depth=1
+    git clone https://github.com/PCRE2Project/pcre2.git --recurse-submodules --depth=1
     #wget https://github.com/PCRE2Project/pcre2/releases/download/pcre2-10.42/pcre2-10.42.tar.gz --no-check-certificate
     #tar -zxf pcre2-10.42.tar.gz && mv pcre2-10.42 pcre2 && rm -f pcre2-10.42.tar.gz
 }
@@ -133,7 +133,7 @@ make clean >/dev/null 2>&1
   --with-openssl-opt='enable-tls1_3' \
   --with-openssl-opt='enable-ktls' \
   --with-openssl="../ext/quictls" \
-  --with-pcre="../ext/pcre2" \
+  --with-pcre2="../ext/pcre2" \
   --with-zlib="../ext/zlib" \
   --add-module="../ext/ngx_brotli" \
   --add-module="../ext/ngx_http_geoip2_module" \
@@ -290,7 +290,7 @@ make clean >/dev/null 2>&1
   --with-openssl-opt='enable-tls1_3' \
   --with-openssl-opt='enable-ktls' \
   --with-openssl="../ext/quictls" \
-  --with-pcre="../ext/pcre2" \
+  --with-pcre2="../ext/pcre2" \
   --with-zlib="../ext/zlib" \
   --add-module="../ext/ngx_brotli" \
   --add-module="../ext/ngx_http_geoip2_module" \
