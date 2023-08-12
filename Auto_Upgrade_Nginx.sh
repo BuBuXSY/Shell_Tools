@@ -33,7 +33,7 @@ cd temp
 
 mkdir -p ext
 
-#latest_version=$(curl -s https://nginx.org/download/ | grep nginx-1.2 | tail -n 1 | awk -F\" '{print $2}' | sed 's/.zip.asc//g')
+latest_version=$(curl -s https://nginx.org/download/ | grep nginx-1.2 | tail -n 1 | awk -F\" '{print $2}' | sed 's/.zip.asc//g')
 
 nginx_source() {
     wget https://nginx.org/download/$latest_version.tar.gz
@@ -189,7 +189,7 @@ cd temp
 
 mkdir -p ext
 
-#latest_version=$(curl -s https://nginx.org/download/ | grep nginx-1.2 | tail -n 1 | awk -F\" '{print $2}' | sed 's/.zip.asc//g')
+latest_version=$(curl -s https://nginx.org/download/ | grep nginx-1.2 | tail -n 1 | awk -F\" '{print $2}' | sed 's/.zip.asc//g')
 
 nginx_source() {
     wget https://nginx.org/download/$latest_version.tar.gz
