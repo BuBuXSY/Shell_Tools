@@ -63,8 +63,8 @@ quictls_source() {
 #} 
 	
 zlib_source() {
-    wget https://zlib.net/zlib-1.2.13.tar.gz --no-check-certificate
-    tar -zxf zlib-1.2.13.tar.gz && mv zlib-1.2.13 zlib && rm -f zlib-1.2.13.tar.gz
+    wget https://zlib.net/zlib-1.3.tar.gz --no-check-certificate
+    tar -zxf zlib-1.3.tar.gz && mv zlib-1.3 zlib && rm -f zlib-1.3.tar.gz
 }
 
 pushd ext
@@ -219,8 +219,8 @@ quictls_source() {
 #} 
 	
 zlib_source() {
-    wget https://zlib.net/zlib-1.2.13.tar.gz --no-check-certificate
-    tar -zxf zlib-1.2.13.tar.gz && mv zlib-1.2.13 zlib && rm -f zlib-1.2.13.tar.gz
+    wget https://zlib.net/zlib-1.3.tar.gz --no-check-certificate
+    tar -zxf zlib-1.3.tar.gz && mv zlib-1.3 zlib && rm -f zlib-1.3.tar.gz
 }
 
 pushd ext
