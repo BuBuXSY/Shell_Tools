@@ -164,6 +164,8 @@ if [ $? -eq 0 ]; then
     echo "systemctl start nginx"
     systemctl start nginx
     echo -e "\e[1;32m新的nginx已成功安装\e[0m"
+    # Delete the temp folder
+    rm -rf ~/temp
 else
     echo
     echo -e " \e[1;31m编译失败！\033[0m"
@@ -321,6 +323,8 @@ if [ $? -eq 0 ]; then
     echo "systemctl start nginx"
     systemctl start nginx
     echo -e "\e[1;32m新的nginx已成功安装\e[0m"
+    # Delete the temp folder
+    rm -rf ~/temp
 else
     echo
     echo -e " \e[1;31m编译失败！\033[0m"
