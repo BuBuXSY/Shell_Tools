@@ -55,7 +55,7 @@ ngx_http_geoip2_module_source() {
 #}
 
 quictls_source() {
-    git clone https://github.com/quictls/openssl -b openssl-3.1.2+quic quictls --recurse-submodules --depth=1 
+    git clone https://github.com/quictls/openssl -b openssl-3.1.4+quic quictls --recurse-submodules --depth=1 
 }
 
 #libressl_source(){
@@ -213,7 +213,7 @@ ngx_http_geoip2_module_source() {
 #}
 
 quictls_source() {
-    git clone https://github.com/quictls/openssl -b openssl-3.1.2+quic quictls --recurse-submodules --depth=1 
+    git clone https://github.com/quictls/openssl -b openssl-3.1.4+quic quictls --recurse-submodules --depth=1 
 }
 
 #libressl_source(){
