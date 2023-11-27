@@ -179,12 +179,13 @@ fi
 else
     echo -e "\e[1;31m取消更新操作.\e[0m"
     exit 0
-fi        
+fi
 else 
     echo -e "\e[1;32m本地安装的Nginx版本\e[0m：$installed_version"
     echo -e "\e[1;32m官网最新版本\e[0m：$latest_version"
     echo -e "\e[1;31m版本不一致\e[0m"        
     echo -e "\e[1;32m执行更新操作...\e[0m"
+fi
 
 #  安装所需的依赖
 apt update && apt install build-essential ca-certificates zlib1g-dev libpcre3 libpcre3-dev tar unzip libssl-dev wget curl git cmake  golang clang -y && apt build-dep nginx -y 
