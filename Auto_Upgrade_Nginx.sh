@@ -176,11 +176,13 @@ else
     echo -e " \e[1;31m编译失败！\033[0m"
     echo -e " 编译耗时：\e[1;31m"$((end_seconds-start_seconds))"\e[0m 秒"
 fi
+
 else
     echo -e "\e[1;31m取消更新操作.\e[0m"
     exit 0
 fi
-else 
+
+else
     echo -e "\e[1;32m本地安装的Nginx版本\e[0m：$installed_version"
     echo -e "\e[1;32m官网最新版本\e[0m：$latest_version"
     echo -e "\e[1;31m版本不一致\e[0m"        
