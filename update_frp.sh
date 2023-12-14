@@ -10,6 +10,16 @@ latest_version=$(curl -sL "https://github.com/fatedier/frp/releases/latest" | gr
 # 删除版本号前缀 "v"
 latest_version=${latest_version#v}
 
+# Function for cleanup on interrupt
+cleanup() {
+    echo -e "\n任务已取消."
+    # Add any cleanup logic here if needed
+    exit 1
+}
+
+# Set up a trap to catch the interrupt signal (Ctrl+C)
+trap cleanup INT
+
 # 检查系统是否已安装frp
 frp_version=$(frps --version 2>/dev/null || frpc --version 2>/dev/null)
 if [[ -n "$frp_version" ]]; then
