@@ -23,8 +23,8 @@ if [[ -n "$frp_version" ]]; then
 
     # 检查已安装的版本是否低于最新版本
     if [[ "$frp_version" < "$latest_version" ]]; then
-        read -p "已安装的frp版本 $frp_version 低于最新版本 $latest_version，是否要升级？ (y/n): " upgrade_choice
-        if [[ "$upgrade_choice" == "y" ]]; then
+        read -p "已安装的frp版本 $frp_version 低于最新版本 $latest_version，是否要升级？ (Y/n): " upgrade_choice
+        if [[ "$upgrade_choice" == "Y" || "$upgrade_choice" == "y" ]]; then
             echo "开始升级frp..."
 
             # 获取已安装的frp类型
