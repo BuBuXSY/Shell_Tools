@@ -38,5 +38,5 @@ if ((duplicate_domains == 1)); then
   cat /dev/null > "$domain_file"
 else
   echo "发现的重复域名数量少于阈值。"
-  rm "$output_file"  # 删除输出文件
+  cat /dev/null > "$output_file"  # 删除输出文件
 fi
