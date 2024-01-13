@@ -54,13 +54,9 @@ ngx_http_geoip2_module_source() {
 #    tar -zxf pcre2-10.42.tar.gz && mv pcre2-10.42 pcre2 && rm -f pcre2-10.42.tar.gz
 #}
 
-#quictls_source() {
-#    git clone https://github.com/quictls/openssl -b openssl-3.1.4+quic quictls --recurse-submodules --depth=1 
-#}
-
-openssl_source(){
-     wget https://www.openssl.org/source/openssl-3.2.0.tar.gz --no-check-certificate
-     tar -zxf openssl-3.2.0.tar.gz && mv openssl-3.2.0 openssl && rm -f openssl-3.2.0.tar.gz
+quictls_source() {
+    git clone https://github.com/quictls/openssl -b openssl-3.1.4+quic quictls --recurse-submodules --depth=1 
+}
 
 #libressl_source(){
 #	curl -sL https://ftp.openbsd.org/pub/OpenBSD/LibreSSL/libressl-3.8.0.tar.gz | tar --strip-components 1 -C ./libressl -xzvf -
@@ -75,8 +71,7 @@ pushd ext
     [ ! -d ngx_brotli ] && ngx_brotli_source
     [ ! -d ngx_http_geoip2_module ] && ngx_http_geoip2_module_source
 #    [ ! -d pcre2 ] && pcre2_source
-#    [ ! -d quictls ] && quictls_source
-    [ ! -d openssl ] && openssl_source
+    [ ! -d quictls ] && quictls_source
 #    [ ! -d libressl ] && libressl_source
     [ ! -d zlib ] && zlib_source
 popd
@@ -137,7 +132,7 @@ make clean >/dev/null 2>&1
   --with-stream_ssl_preread_module \
   --with-openssl-opt='enable-tls1_3' \
   --with-openssl-opt='enable-ktls' \
-  --with-openssl="../ext/openssl" \
+  --with-openssl="../ext/quictls" \
   --with-pcre-jit \
   --with-zlib="../ext/zlib" \
   --add-module="../ext/ngx_brotli" \
@@ -176,12 +171,11 @@ else
     echo -e " \e[1;31m编译失败！\033[0m"
     echo -e " 编译耗时：\e[1;31m"$((end_seconds-start_seconds))"\e[0m 秒"
 fi
-
-else
-    echo -e "\e[1;31m取消更新操作.\e[0m"
-    exit 0
-fi
-
+    else
+        echo -e "\e[1;31m取消更新操作.\e[0m"
+        exit 0
+	fi        
+else 
     echo -e "\e[1;32m本地安装的Nginx版本\e[0m：$installed_version"
     echo -e "\e[1;32m官网最新版本\e[0m：$latest_version"
     echo -e "\e[1;31m版本不一致\e[0m"        
@@ -218,14 +212,9 @@ ngx_http_geoip2_module_source() {
 #    tar -zxf pcre2-10.42.tar.gz && mv pcre2-10.42 pcre2 && rm -f pcre2-10.42.tar.gz
 #}
 
-#quictls_source() {
-#    git clone https://github.com/quictls/openssl -b openssl-3.1.4+quic quictls --recurse-submodules --depth=1 
-#}
-
-openssl_source(){
-     wget https://www.openssl.org/source/openssl-3.2.0.tar.gz --no-check-certificate
-     tar -zxf openssl-3.2.0.tar.gz && mv openssl-3.2.0 openssl && rm -f openssl-3.2.0.tar.gz
-
+quictls_source() {
+    git clone https://github.com/quictls/openssl -b openssl-3.1.4+quic quictls --recurse-submodules --depth=1 
+}
 
 #libressl_source(){
 #	curl -sL https://ftp.openbsd.org/pub/OpenBSD/LibreSSL/libressl-3.8.0.tar.gz | tar --strip-components 1 -C ./libressl -xzvf -
@@ -240,8 +229,7 @@ pushd ext
     [ ! -d ngx_brotli ] && ngx_brotli_source
     [ ! -d ngx_http_geoip2_module ] && ngx_http_geoip2_module_source
 #    [ ! -d pcre2 ] && pcre2_source
-#    [ ! -d quictls ] && quictls_source
-    [ ! -d openssl ] && openssl_source
+    [ ! -d quictls ] && quictls_source
 #    [ ! -d libressl ] && libressl_source
     [ ! -d zlib ] && zlib_source
 popd
@@ -303,7 +291,7 @@ make clean >/dev/null 2>&1
   --with-stream_ssl_preread_module \
   --with-openssl-opt='enable-tls1_3' \
   --with-openssl-opt='enable-ktls' \
-  --with-openssl="../ext/openssl" \
+  --with-openssl="../ext/quictls" \
   --with-pcre-jit \
   --with-zlib="../ext/zlib" \
   --add-module="../ext/ngx_brotli" \
