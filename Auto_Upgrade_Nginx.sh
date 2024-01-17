@@ -54,8 +54,8 @@ ngx_http_geoip2_module_source() {
 #    tar -zxf pcre2-10.42.tar.gz && mv pcre2-10.42 pcre2 && rm -f pcre2-10.42.tar.gz
 #}
 
-quictls_source() {
-    git clone https://github.com/quictls/openssl -b openssl-3.1.4+quic quictls --recurse-submodules --depth=1 
+openssl_source() {
+    git clone https://github.com/openssl/openssl --recurse-submodules --depth=1
 }
 
 #libressl_source(){
@@ -71,7 +71,7 @@ pushd ext
     [ ! -d ngx_brotli ] && ngx_brotli_source
     [ ! -d ngx_http_geoip2_module ] && ngx_http_geoip2_module_source
 #    [ ! -d pcre2 ] && pcre2_source
-    [ ! -d quictls ] && quictls_source
+    [ ! -d openssl ] && openssl_source
 #    [ ! -d libressl ] && libressl_source
     [ ! -d zlib ] && zlib_source
 popd
@@ -132,7 +132,7 @@ make clean >/dev/null 2>&1
   --with-stream_ssl_preread_module \
   --with-openssl-opt='enable-tls1_3' \
   --with-openssl-opt='enable-ktls' \
-  --with-openssl="../ext/quictls" \
+  --with-openssl="../ext/openssl" \
   --with-pcre-jit \
   --with-zlib="../ext/zlib" \
   --add-module="../ext/ngx_brotli" \
@@ -212,8 +212,8 @@ ngx_http_geoip2_module_source() {
 #    tar -zxf pcre2-10.42.tar.gz && mv pcre2-10.42 pcre2 && rm -f pcre2-10.42.tar.gz
 #}
 
-quictls_source() {
-    git clone https://github.com/quictls/openssl -b openssl-3.1.4+quic quictls --recurse-submodules --depth=1 
+openssl_source() {
+    git clone https://github.com/openssl/openssl --recurse-submodules --depth=1
 }
 
 #libressl_source(){
@@ -229,7 +229,7 @@ pushd ext
     [ ! -d ngx_brotli ] && ngx_brotli_source
     [ ! -d ngx_http_geoip2_module ] && ngx_http_geoip2_module_source
 #    [ ! -d pcre2 ] && pcre2_source
-    [ ! -d quictls ] && quictls_source
+    [ ! -d openssl ] && openssl_source
 #    [ ! -d libressl ] && libressl_source
     [ ! -d zlib ] && zlib_source
 popd
@@ -242,7 +242,6 @@ else
     nginx_source
     cd $latest_version
 fi
-
 # 编译
 make clean >/dev/null 2>&1
 ./configure  \
@@ -291,7 +290,7 @@ make clean >/dev/null 2>&1
   --with-stream_ssl_preread_module \
   --with-openssl-opt='enable-tls1_3' \
   --with-openssl-opt='enable-ktls' \
-  --with-openssl="../ext/quictls" \
+  --with-openssl="../ext/openssl" \
   --with-pcre-jit \
   --with-zlib="../ext/zlib" \
   --add-module="../ext/ngx_brotli" \
