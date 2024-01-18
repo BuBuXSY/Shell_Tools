@@ -122,7 +122,7 @@ install_q_deb() {
   echo "正在为您安装'q' ....."
   
   # Download 'q' package
-  wget -O q.deb https://github.com/natesales/q/releases/download/v0.11.1/q_0.11.1_linux_amd64.deb
+  wget -O q.deb https://github.com/natesales/q/releases/download/v0.19.1/q_0.19.1_linux_amd64.deb
 
   # Install 'q' package
   sudo dpkg -i q.deb
@@ -139,7 +139,7 @@ install_q_mac() {
   echo "正在为您安装'q' ....."
 
   # Download 'q' package
-  curl -LO https://github.com/natesales/q/releases/download/v0.11.1/q_0.11.1_darwin_arm64.tar.gz
+  curl -LO https://github.com/natesales/q/releases/download/v0.19.1/q_0.19.1_darwin_arm64.tar.gz
 
   # Extract 'q' package
   tar xf q_0.11.1_darwin_arm64.tar.gz
@@ -158,7 +158,7 @@ install_q_rpm() {
   echo "正在为您安装'q' ....."
 
   # Download 'q' package
-  wget -O q.rpm https://github.com/natesales/q/releases/download/v0.11.1/q_0.11.1_linux_amd64.rpm
+  wget -O q.rpm https://github.com/natesales/q/releases/download/v0.19.1/q_0.19.1_linux_amd64.rpm
 
   # Install 'q' package
   sudo rpm -i q.rpm
@@ -174,7 +174,7 @@ install_q_openwrt() {
   echo "正在为您安装'q' ....."
 
   # Download 'q' package
-  wget -O q.tar.gz https://github.com/natesales/q/releases/download/v0.11.1/q_0.11.1_linux_arm64.tar.gz
+  wget -O q.tar.gz https://github.com/natesales/q/releases/download/v0.19.1/q_0.19.1_linux_arm64.tar.gz
 
   # Extract 'q' package
   tar xf q.tar.gz
