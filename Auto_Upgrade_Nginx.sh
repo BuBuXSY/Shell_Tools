@@ -63,8 +63,8 @@ openssl_source() {
 #} 
 	
 zlib_source() {
-    wget https://zlib.net/zlib-1.3.tar.gz --no-check-certificate
-    tar -zxf zlib-1.3.tar.gz && mv zlib-1.3 zlib && rm -f zlib-1.3.tar.gz
+    wget https://zlib.net/zlib-1.3.1.tar.gz --no-check-certificate
+    tar -zxf zlib-1.3.1.tar.gz && mv zlib-1.3.1 zlib && rm -f zlib-1.3.1.tar.gz
 }
 
 pushd ext
@@ -221,8 +221,8 @@ openssl_source() {
 #} 
 	
 zlib_source() {
-    wget https://zlib.net/zlib-1.3.tar.gz --no-check-certificate
-    tar -zxf zlib-1.3.tar.gz && mv zlib-1.3 zlib && rm -f zlib-1.3.tar.gz
+    wget https://zlib.net/zlib-1.3.1.tar.gz --no-check-certificate
+    tar -zxf zlib-1.3.1.tar.gz && mv zlib-1.3.1 zlib && rm -f zlib-1.3.1.tar.gz
 }
 
 pushd ext
