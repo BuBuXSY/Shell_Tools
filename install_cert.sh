@@ -120,7 +120,9 @@ deploy_certificate() {
   if command -v nginx >/dev/null 2>&1; then
     info "检测到 nginx，尝试重载配置..."
     if nginx -t >/dev/null 2>&1; then
-      if systemctl is-active --quiet nginx; then
+      if [[ -f /etc/openwrt_release ]]; then
+        /etc/init.d/nginx reload && success "OpenWrt: nginx 重载成功！" || warn "OpenWrt: nginx 重载失败，请手动检查"
+      elif systemctl is-active --quiet nginx; then
         systemctl reload nginx && success "nginx 重载成功！" || warn "nginx 重载失败，请手动检查"
       else
         warn "nginx 服务未运行，跳过重载"
