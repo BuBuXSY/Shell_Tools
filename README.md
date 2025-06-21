@@ -34,7 +34,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/searc
 ``` shell 
 bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/install_cert.sh)
 ``` 
-#### 避免了首次安装时繁琐的复制命令 半自动化 使用DNS TXT安装证书的方式唯一需要做的就是复制TXT内容到DNS解析商（默认NGINX） 
+#### 自动化流水线 削减了流程 
 # 
 
 ### 用来测试常见DNS服务器（默认是Adguard的DNS推荐列表中的DNS）是否支持EDNS
