@@ -59,11 +59,10 @@ check_acme_sh() {
 
 check_ipv6_only() {
   if command -v ip >/dev/null 2>&1; then
-    local has_ipv4
-    local has_ipv6
-    has_ipv4=$(ip -4 addr show scope global | grep -v lo || true)
-    has_ipv6=$(ip -6 addr show scope global | grep -v lo || true)
-    if [[ -z "$has_ipv4" && -n "$has_ipv6" ]]; then
+    local has_ipv4_route has_ipv6_route
+    has_ipv4_route=$(ip route | grep default | grep -v "::" || true)
+    has_ipv6_route=$(ip -6 route | grep default || true)
+    if [[ -z "$has_ipv4_route" && -n "$has_ipv6_route" ]]; then
       warn "检测到当前主机为 IPv6-only 环境，部分服务可能无法正常使用。"
     else
       success "检测到支持 IPv4 和/或 IPv6 网络。"
@@ -98,11 +97,24 @@ check_and_install_dependencies() {
 }
 
 install_cron_job() {
-  if crontab -l 2>/dev/null | grep -q "acme.sh --cron"; then
-    info "已存在 acme.sh 定时任务"
+  if command -v crontab >/dev/null 2>&1; then
+    if crontab -l 2>/dev/null | grep -q "acme.sh --cron"; then
+      info "已存在 acme.sh 定时任务"
+    else
+      (crontab -l 2>/dev/null; echo "0 3 * * * \"$acme_home\"/acme.sh --cron --home \"$acme_home\" > /dev/null 2>&1") | crontab -
+      success "已添加每日凌晨3点自动续期的定时任务"
+    fi
+  elif [[ -f /etc/openwrt_release ]]; then
+    local cron_file="/etc/crontabs/root"
+    if grep -q "acme.sh --cron" "$cron_file" 2>/dev/null; then
+      info "已存在 acme.sh 定时任务 (OpenWrt crond)"
+    else
+      echo "0 3 * * * $acme_home/acme.sh --cron --home $acme_home > /dev/null 2>&1" >> "$cron_file"
+      /etc/init.d/cron restart
+      success "已添加每日凌晨3点自动续期的定时任务 (OpenWrt crond)"
+    fi
   else
-    (crontab -l 2>/dev/null; echo "0 3 * * * \"$acme_home\"/acme.sh --cron --home \"$acme_home\" > /dev/null") | crontab -
-    success "已添加每日凌晨3点自动续期的定时任务"
+    warn "未检测到 crontab，无法添加自动续期定时任务，请手动设置"
   fi
 }
 
@@ -158,6 +170,7 @@ EOF
 }
 
 check_dns_api_env() {
+  local mode=$1
   if [[ "$mode" == "1" ]]; then
     case "$DNS_API_PROVIDER" in
       dns_cf)
@@ -230,7 +243,7 @@ apply_certificate() {
   info "开始申请证书，域名：$domains"
   info "使用 CA 服务器：$ca"
 
-  check_dns_api_env  # 加入 DNS API 环境变量检测
+  check_dns_api_env "$mode"  # 传入mode参数检测
 
   if [[ "$mode" == "1" ]]; then
     info "使用 DNS API 自动验证"
@@ -239,7 +252,14 @@ apply_certificate() {
     else
       warn "设置CA服务器失败，继续执行"
     fi
-    if acme.sh --issue --dns "$DNS_API_PROVIDER" -d $domains --force --keylength ec-256; then
+
+    # 多域名循环传递-d参数，防止合并错误
+    local domain_args=()
+    for d in $domains; do
+      domain_args+=("-d" "$d")
+    done
+
+    if acme.sh --issue --dns "$DNS_API_PROVIDER" "${domain_args[@]}" --force --keylength ec-256; then
       success "证书申请成功！"
       deploy_certificate "$domains"
     else
@@ -254,7 +274,13 @@ apply_certificate() {
     else
       warn "设置CA服务器失败，继续执行"
     fi
-    if acme.sh --issue --dns -d $domains --force --keylength ec-256; then
+
+    local domain_args=()
+    for d in $domains; do
+      domain_args+=("-d" "$d")
+    done
+
+    if acme.sh --issue --dns "${domain_args[@]}" --force --keylength ec-256; then
       success "证书申请成功！"
       deploy_certificate "$domains"
     else
