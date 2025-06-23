@@ -1,7 +1,7 @@
 #!/bin/bash
 # 证书管理终极脚本，支持多CA，DNS API/手动验证，ECC证书，自动部署并重载nginx
 # 作者: BuBuXSY
-# 版本: 2025-06-21
+# 版本: 2025-06-23
 
 set -euo pipefail
 
@@ -47,10 +47,36 @@ check_dependency() {
   fi
 }
 
+check_acme_sh() {
+  if [ ! -x "$acme_home/acme.sh" ]; then
+    warn "未检测到 acme.sh，尝试安装中..."
+    curl https://get.acme.sh | sh
+    success "acme.sh 安装完成"
+  else
+    success "acme.sh 已安装"
+  fi
+}
+
+check_ipv6_only() {
+  if command -v ip >/dev/null 2>&1; then
+    local has_ipv4
+    local has_ipv6
+    has_ipv4=$(ip -4 addr show scope global | grep -v lo || true)
+    has_ipv6=$(ip -6 addr show scope global | grep -v lo || true)
+    if [[ -z "$has_ipv4" && -n "$has_ipv6" ]]; then
+      warn "检测到当前主机为 IPv6-only 环境，部分服务可能无法正常使用。"
+    else
+      success "检测到支持 IPv4 和/或 IPv6 网络。"
+    fi
+  else
+    warn "未检测到 ip 命令，无法检测网络类型。"
+  fi
+}
+
 check_and_install_dependencies() {
   info "开始检测依赖..."
   check_dependency socat
-  check_dependency acme.sh
+  check_acme_sh
   # 确保软链
   if [ ! -L /usr/bin/acme.sh ]; then
     ln -sf "$acme_home/acme.sh" /usr/bin/acme.sh
@@ -64,6 +90,19 @@ check_and_install_dependencies() {
     success "证书存放目录已创建：$cert_dir"
   else
     success "证书存放目录存在：$cert_dir"
+  fi
+
+  check_ipv6_only
+
+  install_cron_job
+}
+
+install_cron_job() {
+  if crontab -l 2>/dev/null | grep -q "acme.sh --cron"; then
+    info "已存在 acme.sh 定时任务"
+  else
+    (crontab -l 2>/dev/null; echo "0 3 * * * \"$acme_home\"/acme.sh --cron --home \"$acme_home\" > /dev/null") | crontab -
+    success "已添加每日凌晨3点自动续期的定时任务"
   fi
 }
 
@@ -95,38 +134,86 @@ select_ca_server() {
   fi
 }
 
+print_nginx_tls_template() {
+  cat <<'EOF'
+
+# Nginx TLS 配置示例（请根据实际路径修改）
+
+ssl_certificate      /etc/nginx/cert_file/fullchain.pem;
+ssl_certificate_key  /etc/nginx/cert_file/key.pem;
+
+ssl_protocols        TLSv1.2 TLSv1.3;
+ssl_ciphers          HIGH:!aNULL:!MD5;
+
+ssl_prefer_server_ciphers on;
+
+# 开启 OCSP Stapling
+ssl_stapling         on;
+ssl_stapling_verify  on;
+
+resolver 8.8.8.8 8.8.4.4 valid=300s;
+resolver_timeout 5s;
+
+EOF
+}
+
+check_dns_api_env() {
+  if [[ "$mode" == "1" ]]; then
+    case "$DNS_API_PROVIDER" in
+      dns_cf)
+        if [[ -z "${CF_Token:-}" && -z "${CF_Key:-}" ]]; then
+          error "未检测到 Cloudflare API 环境变量，请设置 CF_Token 或 CF_Key"
+          exit 1
+        else
+          success "检测到 Cloudflare API 环境变量"
+        fi
+        ;;
+      dns_ali)
+        if [[ -z "${Ali_Key:-}" && -z "${Ali_Secret:-}" ]]; then
+          error "未检测到阿里云API环境变量，请设置 Ali_Key 和 Ali_Secret"
+          exit 1
+        else
+          success "检测到阿里云 API 环境变量"
+        fi
+        ;;
+      *)
+        warn "未实现针对 $DNS_API_PROVIDER 的环境变量检测"
+        ;;
+    esac
+  fi
+}
+
 deploy_certificate() {
   local domains="$1"
-  local src_dir="$acme_home/${domains}_ecc"
-  if [ ! -d "$src_dir" ]; then
-    # 兼容非ECC路径
-    src_dir="$acme_home/$domains"
+  local target_dir="${2:-$cert_dir}"
+
+  local reload_cmd
+  if [[ -f /etc/openwrt_release ]]; then
+    reload_cmd="/etc/init.d/nginx reload"
+  else
+    reload_cmd="systemctl reload nginx"
   fi
-  if [ ! -d "$src_dir" ]; then
-    error "证书源目录不存在：$src_dir"
+
+  info "注册证书安装与自动部署..."
+  if acme.sh --install-cert -d "$domains" \
+    --cert-file "$target_dir/cert.pem" \
+    --key-file "$target_dir/key.pem" \
+    --fullchain-file "$target_dir/fullchain.pem" \
+    --reloadcmd "$reload_cmd" \
+    --ecc; then
+    success "证书部署命令已注册成功！"
+    info "证书路径：$target_dir/cert.pem"
+    info "私钥路径：$target_dir/key.pem"
+    info "完整链路径：$target_dir/fullchain.pem"
+  else
+    error "注册证书部署失败，请检查日志。"
     exit 1
   fi
 
-  cp -f "$src_dir/fullchain.cer" "$cert_dir/fullchain.pem"
-  cp -f "$src_dir/${domains}.key" "$cert_dir/key.pem"
-  cp -f "$src_dir/ca.cer" "$cert_dir/ca.pem"
-
-  success "证书已成功部署到 $cert_dir"
-  info "证书路径：$cert_dir/fullchain.pem"
-  info "私钥路径：$cert_dir/key.pem"
-  info "证书链路径：$cert_dir/ca.pem"
-
-  # 尝试重载 nginx
+  info "尝试立即重载 nginx..."
   if command -v nginx >/dev/null 2>&1; then
-    info "检测到 nginx，尝试重载配置..."
     if nginx -t >/dev/null 2>&1; then
-      if [[ -f /etc/openwrt_release ]]; then
-        /etc/init.d/nginx reload && success "OpenWrt: nginx 重载成功！" || warn "OpenWrt: nginx 重载失败，请手动检查"
-      elif systemctl is-active --quiet nginx; then
-        systemctl reload nginx && success "nginx 重载成功！" || warn "nginx 重载失败，请手动检查"
-      else
-        warn "nginx 服务未运行，跳过重载"
-      fi
+      eval "$reload_cmd" && success "nginx 重载成功！" || warn "nginx 重载失败，请手动检查"
     else
       warn "nginx 配置检测失败，跳过重载"
     fi
@@ -142,9 +229,11 @@ apply_certificate() {
 
   info "开始申请证书，域名：$domains"
   info "使用 CA 服务器：$ca"
+
+  check_dns_api_env  # 加入 DNS API 环境变量检测
+
   if [[ "$mode" == "1" ]]; then
     info "使用 DNS API 自动验证"
-    # --force 强制刷新证书，--keylength ec-256 申请ECC证书
     if acme.sh --set-default-ca --server "$ca"; then
       success "默认CA服务器设置成功"
     else
@@ -154,7 +243,7 @@ apply_certificate() {
       success "证书申请成功！"
       deploy_certificate "$domains"
     else
-      error "证书申请失败，请查看 /root/.acme.sh/acme.sh.log 获取详细信息"
+      error "证书申请失败，请查看 $acme_home/acme.sh.log 获取详细信息"
       exit 1
     fi
 
@@ -165,20 +254,18 @@ apply_certificate() {
     else
       warn "设置CA服务器失败，继续执行"
     fi
-    # 手动模式申请ECC证书
     if acme.sh --issue --dns -d $domains --force --keylength ec-256; then
       success "证书申请成功！"
       deploy_certificate "$domains"
     else
-      error "证书申请失败，请查看 /root/.acme.sh/acme.sh.log 获取详细信息"
+      error "证书申请失败，请查看 $acme_home/acme.sh.log 获取详细信息"
       exit 1
     fi
   fi
 }
 
 show_certificate_status() {
-  local domain="$1"
-  local cert_file="$cert_dir/fullchain.pem"
+  local cert_file="${1:-$cert_dir/fullchain.pem}"
   if [ ! -f "$cert_file" ]; then
     warn "证书文件不存在：$cert_file"
     return
@@ -223,7 +310,8 @@ main_menu() {
     echo "  1) 申请新证书"
     echo "  2) 查看已安装证书状态"
     echo "  3) 检测证书有效期并续期"
-    echo "  4) 退出"
+    echo "  4) 输出 nginx TLS 配置示例"
+    echo "  5) 退出"
     prompt "请输入数字并回车: "
     read -r choice
     case $choice in
@@ -250,13 +338,10 @@ main_menu() {
         apply_certificate "$domains" "$mode" "$ca_server"
         ;;
       2)
-        prompt "请输入要查看状态的证书域名: "
-        read -r domain
-        if [[ -z "$domain" ]]; then
-          warn "域名不能为空"
-          continue
-        fi
-        show_certificate_status "$domain"
+        prompt "请输入要查看状态的证书文件完整路径（回车默认使用 $cert_dir/fullchain.pem）: "
+        read -r cert_file_input
+        cert_file_input=${cert_file_input:-$cert_dir/fullchain.pem}
+        show_certificate_status "$cert_file_input"
         ;;
       3)
         prompt "请输入要续期的证书域名: "
@@ -268,6 +353,9 @@ main_menu() {
         renew_certificate "$domain"
         ;;
       4)
+        print_nginx_tls_template
+        ;;
+      5)
         info "退出脚本，拜拜！"
         exit 0
         ;;
