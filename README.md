@@ -30,7 +30,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/searc
 ``` 
 #### 使用前现需要确定安装 [nali](https://github.com/zu1k/nali) 并且开启nginx的access.log功能
 # 
-### 服务器证书申请与安装（默认ECC并且可选择CA供应商）
+### 服务器证书申请与安装（默认ECC并且可选择CA供应商 仅支持Nginx）
 ``` shell 
 bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/install_cert.sh)
 ``` 
