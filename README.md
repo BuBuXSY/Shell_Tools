@@ -3,10 +3,6 @@
 
 DNS运行状态实时监控 [点击这里](https://grafana.bubujun.top/grafana/d/w-Sdzen4k/mosdns-v4?orgId=1&refresh=5s)
  
-### 公益DNS 支持HTTP/3 只允许CN IP访问  
-```
-https://doh.bubujun.top/dns-query
-``` 
 #
 ### 网络性能优化 感谢MapleCool大佬提供 ###
 ``` shell
