@@ -213,6 +213,7 @@ apply_certificate() {
   check_dns_api_env "$mode"  # 传入mode参数检测
 
   # 证书申请流程...
+  acme.sh --issue --dns "$DNS_API_PROVIDER" -d "$domains" --ecc
 }
 
 # 显示证书状态
@@ -223,6 +224,27 @@ show_certificate_status() {
     return
   fi
   # 证书有效期检测...
+}
+
+# 续期证书
+renew_certificate() {
+  local domain="$1"
+  acme.sh --renew -d "$domain" --ecc
+  success "证书续期成功！"
+}
+
+# 输出 nginx TLS 配置示例
+print_nginx_tls_template() {
+  cat <<EOF
+server {
+  listen 443 ssl;
+  server_name example.com;
+  ssl_certificate /etc/nginx/cert_file/fullchain.pem;
+  ssl_certificate_key /etc/nginx/cert_file/key.pem;
+  ssl_protocols TLSv1.2 TLSv1.3;
+  ssl_ciphers 'ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:...';
+}
+EOF
 }
 
 # 主菜单
@@ -290,5 +312,9 @@ main_menu() {
 }
 
 # ==== 主程序 ====
-check_and_install_dependencies
+check_dependency "curl"
+check_dependency "nginx"
+check_dependency "cron"
+check_acme_sh
+install_cron_job
 main_menu
