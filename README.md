@@ -4,7 +4,7 @@
 DNS运行状态实时监控 [点击这里](https://grafana.bubujun.top/grafana/d/w-Sdzen4k/mosdns-v4?orgId=1&refresh=5s)
  
 #
-### 网络性能优化 感谢MapleCool大佬提供 ###
+### Linux 系统性能优化  ###
 ``` shell
 bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/kernel_optimization.sh)
 ``` 
