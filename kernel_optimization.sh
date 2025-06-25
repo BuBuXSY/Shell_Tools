@@ -1,7 +1,7 @@
 #!/bin/bash
 # Linux Kernel Optimization
 # Supported platforms: CentOS/RedHat 7+, Debian 9+, Ubuntu 16+, Fedora, Arch
-# By BuBuXSY
+# By: BuBuXSY
 # Version: 2025-06-25
 
 # Colors
