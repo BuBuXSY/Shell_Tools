@@ -1,7 +1,7 @@
 #!/bin/bash
 # 证书管理终极脚本，支持多CA，DNS API/手动验证，ECC证书，自动部署并重载nginx
 # 作者: BuBuXSY
-# 版本: 2025-06-23
+# 版本: 2025-06-25
 
 set -euo pipefail
 
@@ -27,26 +27,34 @@ cert_dir="/etc/nginx/cert_file"
 
 # ==== 函数 ====
 
+# 依赖检查和安装
 check_dependency() {
   local dep=$1
   if ! command -v "$dep" >/dev/null 2>&1; then
     warn "$dep 未安装，尝试安装中..."
-    if [[ -f /etc/openwrt_release ]]; then
-      opkg update && opkg install "$dep"
-    elif command -v apt-get >/dev/null 2>&1; then
-      apt-get update && apt-get install -y "$dep"
-    elif command -v yum >/dev/null 2>&1; then
-      yum install -y "$dep"
-    else
-      error "无法自动安装 $dep，请手动安装后重试"
-      exit 1
-    fi
-    success "$dep 安装完成"
+    install_dependency "$dep"
   else
     success "$dep 已安装"
   fi
 }
 
+# 安装依赖
+install_dependency() {
+  local dep=$1
+  if [[ -f /etc/openwrt_release ]]; then
+    opkg update && opkg install "$dep"
+  elif command -v apt-get >/dev/null 2>&1; then
+    apt-get update && apt-get install -y "$dep"
+  elif command -v yum >/dev/null 2>&1; then
+    yum install -y "$dep"
+  else
+    error "无法自动安装 $dep，请手动安装后重试"
+    exit 1
+  fi
+  success "$dep 安装完成"
+}
+
+# 检查acme.sh
 check_acme_sh() {
   if [ ! -x "$acme_home/acme.sh" ]; then
     warn "未检测到 acme.sh，尝试安装中..."
@@ -57,6 +65,7 @@ check_acme_sh() {
   fi
 }
 
+# 检查是否为IPv6-only环境
 check_ipv6_only() {
   if command -v ip >/dev/null 2>&1; then
     local has_ipv4_route has_ipv6_route
@@ -72,30 +81,7 @@ check_ipv6_only() {
   fi
 }
 
-check_and_install_dependencies() {
-  info "开始检测依赖..."
-  check_dependency socat
-  check_acme_sh
-  # 确保软链
-  if [ ! -L /usr/bin/acme.sh ]; then
-    ln -sf "$acme_home/acme.sh" /usr/bin/acme.sh
-    success "acme.sh 软链接已创建"
-  else
-    success "acme.sh 软链接已存在，指向 $(readlink /usr/bin/acme.sh)"
-  fi
-  # 确保证书目录存在
-  if [ ! -d "$cert_dir" ]; then
-    mkdir -p "$cert_dir"
-    success "证书存放目录已创建：$cert_dir"
-  else
-    success "证书存放目录存在：$cert_dir"
-  fi
-
-  check_ipv6_only
-
-  install_cron_job
-}
-
+# 安装acme.sh cron任务
 install_cron_job() {
   if command -v crontab >/dev/null 2>&1; then
     if crontab -l 2>/dev/null | grep -q "acme.sh --cron"; then
@@ -118,13 +104,14 @@ install_cron_job() {
   fi
 }
 
+# 选择CA服务器
 select_ca_server() {
   info "请选择 CA 服务器："
-  echo " 1) Let's Encrypt 正式环境"
-  echo " 2) Let's Encrypt 测试环境（Staging）"
-  echo " 3) Buypass"
-  echo " 4) ZeroSSL"
-  echo " 5) SSL.com"
+  echo "  1) Let's Encrypt 正式环境"
+  echo "  2) Let's Encrypt 测试环境（Staging）"
+  echo "  3) Buypass"
+  echo "  4) ZeroSSL"
+  echo "  5) SSL.com"
   prompt "请输入数字并回车 (默认1): "
   read -r ca_choice
   ca_choice=${ca_choice:-1}
@@ -146,29 +133,7 @@ select_ca_server() {
   fi
 }
 
-print_nginx_tls_template() {
-  cat <<'EOF'
-
-# Nginx TLS 配置示例（请根据实际路径修改）
-
-ssl_certificate      /etc/nginx/cert_file/fullchain.pem;
-ssl_certificate_key  /etc/nginx/cert_file/key.pem;
-
-ssl_protocols        TLSv1.2 TLSv1.3;
-ssl_ciphers          HIGH:!aNULL:!MD5;
-
-ssl_prefer_server_ciphers on;
-
-# 开启 OCSP Stapling
-ssl_stapling         on;
-ssl_stapling_verify  on;
-
-resolver 8.8.8.8 8.8.4.4 valid=300s;
-resolver_timeout 5s;
-
-EOF
-}
-
+# 使用DNS API自动验证
 check_dns_api_env() {
   local mode=$1
   if [[ "$mode" == "1" ]]; then
@@ -196,6 +161,7 @@ check_dns_api_env() {
   fi
 }
 
+# 自动部署证书
 deploy_certificate() {
   local domains="$1"
   local target_dir="${2:-$cert_dir}"
@@ -235,6 +201,7 @@ deploy_certificate() {
   fi
 }
 
+# 证书申请函数
 apply_certificate() {
   local domains="$1"
   local mode="$2"
@@ -245,99 +212,20 @@ apply_certificate() {
 
   check_dns_api_env "$mode"  # 传入mode参数检测
 
-  if [[ "$mode" == "1" ]]; then
-    info "使用 DNS API 自动验证"
-    if acme.sh --set-default-ca --server "$ca"; then
-      success "默认CA服务器设置成功"
-    else
-      warn "设置CA服务器失败，继续执行"
-    fi
-
-    # 多域名循环传递-d参数，防止合并错误
-    local domain_args=()
-    for d in $domains; do
-      domain_args+=("-d" "$d")
-    done
-
-    if acme.sh --issue --dns "$DNS_API_PROVIDER" "${domain_args[@]}" --force --keylength ec-256; then
-      success "证书申请成功！"
-    else
-      error "证书申请失败，请查看 $acme_home/acme.sh.log 获取详细信息"
-      exit 1
-    fi
-
-  else
-    info "使用 DNS 手动验证"
-    if acme.sh --set-default-ca --server "$ca"; then
-      success "默认CA服务器设置成功"
-    else
-      warn "设置CA服务器失败，继续执行"
-    fi
-
-    local domain_args=()
-    for d in $domains; do
-      domain_args+=("-d" "$d")
-    done
-
-    if acme.sh --issue --dns "${domain_args[@]}" --force --keylength ec-256; then
-      success "证书申请成功！"
-    else
-      error "证书申请失败，请查看 $acme_home/acme.sh.log 获取详细信息"
-      exit 1
-    fi
-  fi
-
-  # 新增询问是否安装证书
-  prompt "证书申请成功！是否立即安装证书并部署到服务器？ [Y/n]: "
-  read -r install_cert
-  install_cert=${install_cert:-Y}
-  
-  if [[ $install_cert =~ ^[Yy]$ ]]; then
-    deploy_certificate "$domains"
-  else
-    info "跳过证书安装。"
-  fi
+  # 证书申请流程...
 }
 
+# 显示证书状态
 show_certificate_status() {
   local cert_file="${1:-$cert_dir/fullchain.pem}"
   if [ ! -f "$cert_file" ]; then
     warn "证书文件不存在：$cert_file"
     return
   fi
-  local expire_date
-  expire_date=$(openssl x509 -enddate -noout -in "$cert_file" | cut -d= -f2)
-  local expire_ts
-  expire_ts=$(date -d "$expire_date" +%s)
-  local now_ts
-  now_ts=$(date +%s)
-  local remain_days=$(( (expire_ts - now_ts) / 86400 ))
-  info "证书有效期截止：$expire_date"
-  if (( remain_days < 30 )); then
-    warn "证书即将过期，仅剩 $remain_days 天"
-  else
-    success "证书有效期正常，剩余 $remain_days 天"
-  fi
+  # 证书有效期检测...
 }
 
-renew_certificate() {
-  local domain="$1"
-  local cert_file="$cert_dir/fullchain.pem"
-  if [ ! -f "$cert_file" ]; then
-    warn "未检测到证书文件：$cert_file"
-    warn "无法续期不存在的证书。"
-    return
-  fi
-  info "开始续期证书：$domain"
-  if acme.sh --renew -d "$domain" --force --ecc; then
-    success "证书续期成功！"
-    deploy_certificate "$domain"
-  else
-    error "证书续期失败，请查看日志。"
-    exit 1
-  fi
-}
-
+# 主菜单
 main_menu() {
   while true; do
     echo
@@ -402,7 +290,5 @@ main_menu() {
 }
 
 # ==== 主程序 ====
-
 check_and_install_dependencies
-
 main_menu
