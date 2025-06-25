@@ -9,7 +9,7 @@ DNS运行状态实时监控 [点击这里](https://grafana.bubujun.top/grafana/d
 bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/kernel_optimization.sh)
 ``` 
 #
-### 适用于Debian系的一键自动更新Nginx脚本加入了QUIC Brotli OCSP GEOIP2 KTLS的支持 感谢Zhang Xin提供 并由BuBuXSY进行修改	
+### 适用于Debian系的一键自动更新Nginx脚本加入了QUIC Brotli OCSP GEOIP2 KTLS的支持
 ``` bash
 bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/Auto_Upgrade_Nginx.sh)
 ``` 
