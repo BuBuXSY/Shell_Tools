@@ -1,8 +1,6 @@
 #!/bin/bash
 # Linux Kernel Optimization
 # Supported platforms: CentOS/RedHat 7+, Debian 9+, Ubuntu 16+, Fedora, Arch
-# By: BuBuXSY
-# Version: 2025-06-25
 
 # Colors
 GREEN="\e[1;32m"
@@ -154,7 +152,8 @@ fi
 sysctl -p
 
 # Asking for reboot
-read -p "$(echo -e ${YELLOW}Do you want to reboot now to apply all changes? (y/n)${RESET} 🖥️): " REBOOT
+echo -e "${YELLOW}Do you want to reboot now to apply all changes? (y/n)${RESET} 🖥️"
+read REBOOT
 if [[ "$REBOOT" =~ ^[Yy]$ ]]; then
     echo -e "${CYAN}Rebooting system...${RESET} 🔄"
     reboot
