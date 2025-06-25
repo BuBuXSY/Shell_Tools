@@ -1,7 +1,7 @@
 #!/bin/bash
 # 证书管理终极脚本，支持多CA，DNS API/手动验证，ECC证书，自动部署并重载nginx
-# 作者: BuBuXSY
-# 版本: 2025-06-25
+# By: BuBuXSY
+# Version: 2025-06-25
 
 set -euo pipefail
 
