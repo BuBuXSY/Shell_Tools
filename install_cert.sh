@@ -261,7 +261,6 @@ apply_certificate() {
 
     if acme.sh --issue --dns "$DNS_API_PROVIDER" "${domain_args[@]}" --force --keylength ec-256; then
       success "证书申请成功！"
-      deploy_certificate "$domains"
     else
       error "证书申请失败，请查看 $acme_home/acme.sh.log 获取详细信息"
       exit 1
@@ -282,11 +281,21 @@ apply_certificate() {
 
     if acme.sh --issue --dns "${domain_args[@]}" --force --keylength ec-256; then
       success "证书申请成功！"
-      deploy_certificate "$domains"
     else
       error "证书申请失败，请查看 $acme_home/acme.sh.log 获取详细信息"
       exit 1
     fi
+  fi
+
+  # 新增询问是否安装证书
+  prompt "证书申请成功！是否立即安装证书并部署到服务器？ [Y/n]: "
+  read -r install_cert
+  install_cert=${install_cert:-Y}
+  
+  if [[ $install_cert =~ ^[Yy]$ ]]; then
+    deploy_certificate "$domains"
+  else
+    info "跳过证书安装。"
   fi
 }
 
