@@ -1,8 +1,8 @@
 #!/bin/bash
 # Linux Kernel Optimization
 # Supported platforms: CentOS/RedHat 7+, Debian 9+, Ubuntu 16+, Fedora, Arch
-# By BuBuXSY 2025.6.25
-
+# By BuBuXSY
+# Version: 2025-06-25
 
 # Colors
 GREEN="\e[1;32m"
