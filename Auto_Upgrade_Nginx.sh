@@ -1,4 +1,8 @@
 #!/bin/bash
+# Nginx 编译安装性能拉满脚本
+# By: BuBuXSY
+# Version: 2025-06-25
+
 # 设置颜色和格式
 COLORS=(
     "\e[1;32m"  # 绿色
