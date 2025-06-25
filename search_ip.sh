@@ -47,7 +47,7 @@ done
 # ========== 推送企业微信 ==========
 echo -e "${CYAN}📤 推送报告到企业微信...${RESET}"
 safe_message=$(echo "$message" | sed ':a;N;$!ba;s/\n/\\n/g' | sed 's/"/\\"/g')
-json="{\"msgtype\":\"text\",\"text\":{\"content\":\"$safe_message\"}}"
+json="{\"msgtype\":\"text\",\"text\":{\"content\":\"【DNS 查询高频 IP 报告】\\n$safe_message\"}}"
 
 curl -s -X POST "$webhook_url" \
     -H 'Content-Type: application/json' \
