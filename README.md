@@ -1,9 +1,8 @@
 # 🚀 各类一键脚本 — 把复杂的东西简单化  
 *(以下均在 Debian 系和 OpenWrt 系统上测试，其他系统需自行调整)*
 
----
 
-### ⚙️ Linux 系统性能优化  
+## ⚙️ Linux 系统性能优化  
 ```shell
 bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/kernel_optimization.sh)
 
@@ -15,14 +14,11 @@ bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/Auto_
 ### 🌍 更新 Country.mmdb 供 Nginx GEOIP2 使用
 ```shell
 bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/update_Country.sh)
-提示：
-
-默认路径：/usr/share/GeoIP（请提前 mkdir -p /usr/share/GeoIP）
-
-支持企业微信推送（需替换脚本内 webhook Key）
-
-可通过 crontab -e 添加定时任务，如：
-0 4 * * * /root/update_Country.sh（每日凌晨4点执行）
+- 提示：
+- 默认路径：/usr/share/GeoIP（请提前 mkdir -p /usr/share/GeoIP）
+- 支持企业微信推送（需替换脚本内 webhook Key）
+- 可通过 crontab -e 添加定时任务，如：
+- 0 4 * * * /root/update_Country.sh（每日凌晨4点执行）
 
 ### 🔍 查询访问服务器 IP 并显示地理位置（防刷 DNS）
 ```shell
