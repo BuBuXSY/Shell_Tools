@@ -1,4 +1,8 @@
 #!/bin/bash
+# 查找IP
+# By: BuBuXSY
+# Version: 2025-06-25
+
 
 # Colors for output
 GREEN="\e[1;32m"
