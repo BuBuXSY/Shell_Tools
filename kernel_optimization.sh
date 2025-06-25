@@ -1,10 +1,38 @@
 #!/bin/bash
 # Linux Kernel Optimization
-# Supported platforms: CentOS/RedHat 7+, Debian 9+, and Ubuntu 16+
-[ "$(id -u)" != "0" ] && { echo "Error: You must be root to run this script"; exit 1; }
+# Supported platforms: CentOS/RedHat 7+, Debian 9+, Ubuntu 16+, Fedora, Arch
+# By BuBuXSY 2025.6.25
 
-[ -e /etc/security/limits.d/*nproc.conf ] && rename nproc.conf nproc.conf_bk /etc/security/limits.d/*nproc.conf
-[ -f /etc/pam.d/common-session ] && [ -z "$(grep 'session required pam_limits.so' /etc/pam.d/common-session)" ] && echo "session required pam_limits.so" >> /etc/pam.d/common-session
+
+# Colors
+GREEN="\e[1;32m"
+YELLOW="\e[1;33m"
+RED="\e[1;31m"
+BLUE="\e[1;34m"
+PURPLE="\e[1;35m"
+CYAN="\e[1;36m"
+BOLD="\e[1m"
+RESET="\e[0m"
+
+# Fancy Title
+echo -e "${CYAN}${BOLD}Linux Kernel Optimization Script${RESET} 🖥️✨"
+
+# Check if running as root
+[ "$(id -u)" != "0" ] && { echo -e "${RED}Error: You must be root to run this script${RESET} 🚫"; exit 1; }
+
+# Ensure required files exist before proceeding
+if [ -e /etc/security/limits.d/*nproc.conf ]; then
+    rename nproc.conf nproc.conf_bk /etc/security/limits.d/*nproc.conf
+else
+    echo -e "${YELLOW}No nproc.conf file found, skipping renaming.${RESET} ⚠️"
+fi
+
+if [ -f /etc/pam.d/common-session ] && ! grep -q 'session required pam_limits.so' /etc/pam.d/common-session; then
+    echo "session required pam_limits.so" >> /etc/pam.d/common-session
+fi
+
+# Modify system limits
+echo -e "${GREEN}Modifying /etc/security/limits.conf...${RESET} 📜"
 sed -i '/^# End of file/,$d' /etc/security/limits.conf
 cat >> /etc/security/limits.conf <<EOF
 # End of file
@@ -27,6 +55,8 @@ root     hard   memlock   unlimited
 root     soft   memlock   unlimited
 EOF
 
+# Clean up sysctl.conf and append new settings
+echo -e "${GREEN}Modifying /etc/sysctl.conf...${RESET} 📄"
 sed -i '/fs.file-max/d' /etc/sysctl.conf
 sed -i '/fs.inotify.max_user_instances/d' /etc/sysctl.conf
 sed -i '/net.core.somaxconn/d' /etc/sysctl.conf
@@ -66,9 +96,9 @@ sed -i '/net.ipv4.conf.all.route_localnet/d' /etc/sysctl.conf
 sed -i '/net.ipv4.ip_forward/d' /etc/sysctl.conf
 sed -i '/net.ipv4.conf.all.forwarding/d' /etc/sysctl.conf
 sed -i '/net.ipv4.conf.default.forwarding/d' /etc/sysctl.conf
-sed -i '/net.core.default_qdisc/d' /etc/sysctl.conf
-sed -i '/net.ipv4.tcp_congestion_control/d' /etc/sysctl.conf
-cat >> /etc/sysctl.conf << EOF
+
+# Append optimized settings
+cat >> /etc/sysctl.conf <<EOF
 fs.file-max = 1048576
 fs.inotify.max_user_instances = 8192
 net.core.somaxconn = 32768
@@ -110,10 +140,26 @@ net.ipv4.conf.all.forwarding = 1
 net.ipv4.conf.default.forwarding = 1
 EOF
 
+# Enable BBR if supported by the kernel
 modprobe tcp_bbr &>/dev/null
 if grep -wq bbr /proc/sys/net/ipv4/tcp_available_congestion_control; then
-echo "net.core.default_qdisc = fq" >>/etc/sysctl.conf
-echo "net.ipv4.tcp_congestion_control = bbr" >>/etc/sysctl.conf
+    echo -e "${GREEN}Enabling BBR congestion control...${RESET} 🚀"
+    echo "net.core.default_qdisc = fq" >> /etc/sysctl.conf
+    echo "net.ipv4.tcp_congestion_control = bbr" >> /etc/sysctl.conf
+else
+    echo -e "${RED}BBR is not available on this kernel.${RESET} ❌"
 fi
 
-sysctl -p && clear && . ~/.bashrc && echo "Successful kernel optimization - Powered by apad.pro"
+# Apply sysctl settings
+sysctl -p
+
+# Asking for reboot
+read -p "$(echo -e ${YELLOW}Do you want to reboot now to apply all changes? (y/n)${RESET} 🖥️): " REBOOT
+if [[ "$REBOOT" =~ ^[Yy]$ ]]; then
+    echo -e "${CYAN}Rebooting system...${RESET} 🔄"
+    reboot
+else
+    echo -e "${GREEN}Changes applied successfully without rebooting.${RESET} 🎉"
+fi
+
+clear && . ~/.bashrc && echo -e "${BLUE}Kernel optimization complete!${RESET} ✅"
