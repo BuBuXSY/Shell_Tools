@@ -93,10 +93,32 @@ select_operation() {
         2)
             operation="renew"
             echo -e "${SUCCESS}你选择了续期证书。${RESET}"
+            # 获取已存在的域名列表
+            domains=$(acme.sh --list | awk '{print $1}')
+            echo -e "${INFO}已存在以下证书："
+            select domain in $domains; do
+                if [ -n "$domain" ]; then
+                    echo -e "${SUCCESS}你选择了域名 $domain 进行续期。${RESET}"
+                    break
+                else
+                    echo -e "${ERROR}无效选择，请重新选择一个域名。${RESET}"
+                fi
+            done
             ;;
         3)
             operation="force_renew"
             echo -e "${SUCCESS}你选择了强制重新更新证书。${RESET}"
+            # 获取已存在的域名列表
+            domains=$(acme.sh --list | awk '{print $1}')
+            echo -e "${INFO}已存在以下证书："
+            select domain in $domains; do
+                if [ -n "$domain" ]; then
+                    echo -e "${SUCCESS}你选择了域名 $domain 进行强制更新。${RESET}"
+                    break
+                else
+                    echo -e "${ERROR}无效选择，请重新选择一个域名。${RESET}"
+                fi
+            done
             ;;
         *)
             echo -e "${ERROR}无效选项，默认为申请新证书。${RESET}"
