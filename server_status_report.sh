@@ -1,0 +1,74 @@
+#通过企业微信机器人来推送服务器状态的脚本
+
+#!/bin/bash
+
+WEBHOOK_URL="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=你的企业微信机器人KEY"
+CACHE_FILE="/tmp/server_net_stat.cache"
+CURRENT_TIME=$(date +"%Y-%m-%d %H:%M:%S")
+
+# 获取公网 IP 和地理信息
+IP_INFO_RAW=$(curl -s http://myip.ipip.net)
+PUBLIC_IP=$(echo "$IP_INFO_RAW" | sed -n 's/.*IP：\([0-9\.]*\).*/\1/p')
+LOCATION=$(echo "$IP_INFO_RAW" | sed -n 's/.*来自于：\(.*\)$/\1/p')
+[[ -z "$PUBLIC_IP" ]] && PUBLIC_IP="未知"
+[[ -z "$LOCATION" ]] && LOCATION="未知"
+
+# 获取默认网卡接口
+NET_INTERFACE=$(ip route get 1.1.1.1 2>/dev/null | awk '{print $5; exit}')
+[[ -z "$NET_INTERFACE" ]] && NET_INTERFACE="eth0"
+
+# 网络流量统计
+RX_NOW=$(cat /sys/class/net/${NET_INTERFACE}/statistics/rx_bytes 2>/dev/null || echo 0)
+TX_NOW=$(cat /sys/class/net/${NET_INTERFACE}/statistics/tx_bytes 2>/dev/null || echo 0)
+NOW_EPOCH=$(date +%s)
+
+if [[ -f "$CACHE_FILE" ]]; then
+  read LAST_EPOCH LAST_RX LAST_TX < "$CACHE_FILE"
+else
+  LAST_EPOCH=$NOW_EPOCH
+  LAST_RX=$RX_NOW
+  LAST_TX=$TX_NOW
+fi
+
+TIME_DIFF=$((NOW_EPOCH - LAST_EPOCH))
+(( TIME_DIFF <= 0 )) && TIME_DIFF=1
+
+RX_RATE=$(( (RX_NOW - LAST_RX) / TIME_DIFF / 1024 ))
+TX_RATE=$(( (TX_NOW - LAST_TX) / TIME_DIFF / 1024 ))
+(( RX_RATE < 0 )) && RX_RATE=0
+(( TX_RATE < 0 )) && TX_RATE=0
+
+echo "$NOW_EPOCH $RX_NOW $TX_NOW" > "$CACHE_FILE"
+
+# CPU 负载
+read CPU1 CPU5 CPU15 <<<$(uptime | awk -F 'load average:' '{print $2}' | tr -d ',')
+
+# 内存状态
+MEM_TOTAL=$(free -m | awk '/Mem:/ {print $2}')
+MEM_USED=$(free -m | awk '/Mem:/ {print $3}')
+MEM_BUFF_CACHE=$(free -m | awk '/Mem:/ {print $6}')
+MEM_AVAILABLE=$(free -m | awk '/Mem:/ {print $7}')
+MEM_USAGE=$(( MEM_USED * 100 / MEM_TOTAL ))
+
+# 磁盘使用
+DISK_INFO=$(df -h --output=target,pcent | tail -n +2 | awk '{print $1" "$2}' | paste -sd ", " -)
+
+# Top3 CPU 占用进程
+TOP_PROC=$(ps -eo pid,pcpu,comm --sort=-pcpu | head -n 4 | tail -n 3 | \
+  awk '{printf "PID:%s CPU:%.1f%% CMD:%s\n", $1,$2,$3}')
+
+# 系统运行时间
+UPTIME=$(uptime -p)
+
+# 构建消息 payload
+read -r -d '' PAYLOAD <<EOF
+{
+  "msgtype": "text",
+  "text": {
+    "content": "🖥️ *服务器状态报告*\n时间: $CURRENT_TIME\n\n📍 服务器地理位置: $LOCATION (公网IP: $PUBLIC_IP)\n\n💡 *CPU 负载* (1m/5m/15m): $CPU1 / $CPU5 / $CPU15\n\n🧠 *内存* (已用/总量/缓存/可用): ${MEM_USED}MB / ${MEM_TOTAL}MB / ${MEM_BUFF_CACHE}MB / ${MEM_AVAILABLE}MB\n内存使用率: ${MEM_USAGE}%\n\n💽 *磁盘使用*:\n$DISK_INFO\n\n🌐 *网络流量* (${NET_INTERFACE} 接口):\n⬇️ 下载速率: ${RX_RATE} KB/s\n⬆️ 上传速率: ${TX_RATE} KB/s\n\n🔥 *Top 3 CPU 占用进程*:\n$TOP_PROC\n\n⏳ 系统运行时间: $UPTIME"
+  }
+}
+EOF
+
+# 推送消息
+curl -s -X POST -H "Content-Type: application/json" -d "$PAYLOAD" "$WEBHOOK_URL" > /dev/null
