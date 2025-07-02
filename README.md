@@ -66,3 +66,10 @@ bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/updat
 )
 ```
 - 脚本自动判断系统架构，自动安装最新版 frps 或 frpc，升级无须选择。
+
+### 🤠 服务器状态推送脚本
+```shell
+bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/update_frp.sh
+)
+```
+- 别忘记下载下来之后给予脚本权限并将文中的key改为自己的key哦 再通过crontab -e 来填写需要推送的周期 例：0 */3 * * * /bin/bash /root/server_status_report.sh
