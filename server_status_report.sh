@@ -3,19 +3,36 @@
 # Version: 2025-07-03
 
 #!/bin/bash
-
+######################################################################################
 WEBHOOK_URL="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=你的企业微信机器人KEY"
+######################################################################################
+
+
 CACHE_FILE="/tmp/server_net_stat.cache"
+LOG_FILE="/tmp/server_net_stat.log"
 CURRENT_TIME=$(date +"%Y-%m-%d %H:%M:%S")
+CACHE_TIMEOUT=3600  # 缓存过期时间，单位：秒（1小时）
+
+log() {
+  echo "[$(date +"%Y-%m-%d %H:%M:%S")] $1" >> "$LOG_FILE"
+}
 
 # 获取公网 IP 和地理信息
 IP_INFO_RAW=$(curl -s http://myip.ipip.net)
+CURL_STATUS=$?
+
+if [[ "$CURL_STATUS" -ne 0 ]]; then
+    log "Curl failed with status: $CURL_STATUS"
+    IP_INFO_RAW="" # 确保为空，触发未知
+fi
+
 PUBLIC_IP=$(echo "$IP_INFO_RAW" | sed -n 's/.*IP：\([0-9\.]*\).*/\1/p')
 LOCATION=$(echo "$IP_INFO_RAW" | sed -n 's/.*来自于：\(.*\)$/\1/p')
+
 [[ -z "$PUBLIC_IP" ]] && PUBLIC_IP="未知"
 [[ -z "$LOCATION" ]] && LOCATION="未知"
 
-# 获取默认网卡接口
+# 获取默认网卡接口（自动选择流量最大的网卡）
 NET_INTERFACE=$(ip route get 1.1.1.1 2>/dev/null | awk '{print $5; exit}')
 [[ -z "$NET_INTERFACE" ]] && NET_INTERFACE="eth0"
 
@@ -33,12 +50,18 @@ else
 fi
 
 TIME_DIFF=$((NOW_EPOCH - LAST_EPOCH))
-(( TIME_DIFF <= 0 )) && TIME_DIFF=1
-
-RX_RATE=$(( (RX_NOW - LAST_RX) / TIME_DIFF / 1024 ))
-TX_RATE=$(( (TX_NOW - LAST_TX) / TIME_DIFF / 1024 ))
-(( RX_RATE < 0 )) && RX_RATE=0
-(( TX_RATE < 0 )) && TX_RATE=0
+# 如果缓存超过设定的超时时间，强制更新
+if [[ "$TIME_DIFF" -gt "$CACHE_TIMEOUT" ]]; then
+  log "Cache expired, refreshing data..."
+  RX_RATE=0
+  TX_RATE=0
+else
+  (( TIME_DIFF <= 0 )) && TIME_DIFF=1
+  RX_RATE=$(( (RX_NOW - LAST_RX) / TIME_DIFF / 1024 ))
+  TX_RATE=$(( (TX_NOW - LAST_TX) / TIME_DIFF / 1024 ))
+  (( RX_RATE < 0 )) && RX_RATE=0
+  (( TX_RATE < 0 )) && TX_RATE=0
+fi
 
 echo "$NOW_EPOCH $RX_NOW $TX_NOW" > "$CACHE_FILE"
 
@@ -74,3 +97,8 @@ EOF
 
 # 推送消息
 curl -s -X POST -H "Content-Type: application/json" -d "$PAYLOAD" "$WEBHOOK_URL" > /dev/null
+if [[ $? -eq 0 ]]; then
+  log "Status report sent successfully."
+else
+  log "Failed to send status report."
+fi
