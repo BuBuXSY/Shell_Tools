@@ -52,15 +52,6 @@ bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/insta
 
 ***
 
-### 🌐 测试 DNS 服务器是否支持 EDNS（默认用 AdGuard 推荐列表）
-```shell
-bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/EDNS_TEST.sh
-)
-```
-- 依赖 q，脚本会自动检测并安装。支持 Debian、RedHat、OpenWrt、MacOS。
-
-***
-
 ### ⏰ 定时收集 MOSDNS 重复查询域名，优化查询压力
 ```shell
 bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/collect_repeat_dns.sh
