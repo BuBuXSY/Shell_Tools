@@ -1,14 +1,13 @@
 # 🚀 各类一键脚本 — 把复杂的东西简单化  
 *(以下均在 Debian 系和 OpenWrt 系统上测试，其他系统需自行调整)*
 
-
 ### ⚙️ Linux 系统性能优化  
 ```shell
 bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/kernel_optimization.sh)
 ```
 
 ***
-
+---
 ### 🦄 Debian 系自动更新 Nginx（支持 QUIC、Brotli、OCSP、GEOIP2、KTLS）
 ```shell
 bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/Auto_Upgrade_Nginx.sh)
