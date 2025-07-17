@@ -77,7 +77,7 @@ curl -L -o server_status_report.sh https://raw.githubusercontent.com/BuBuxsy/She
 - 这个增强版脚本提供了一个全面的方式来测试各种 DNS-over-HTTPS (DoH) 服务器，包括广泛的全球服务提供商，并能检测现代 DNS 特性。
 
 > 功能特性
-> 1. 丰富的 DoH 服务器列表
+- 1. 丰富的 DoH 服务器列表
 > 脚本包含了广泛的 DoH 服务器选择，便于识别：
 
 > 国际主流： Cloudflare、Google、Quad9、OpenDNS、AdGuard、NextDNS
@@ -88,7 +88,7 @@ curl -L -o server_status_report.sh https://raw.githubusercontent.com/BuBuxsy/She
 
 > 特殊功能： 隐私保护、广告拦截、恶意软件防护、家庭过滤
 
-> 2. 特性检测功能
+- 2. 特性检测功能
 > 它自动检测并验证关键的 DNS 特性：
 
 > HTTP/3 支持： 检测并自动使用 HTTP/3。
@@ -101,7 +101,7 @@ curl -L -o server_status_report.sh https://raw.githubusercontent.com/BuBuxsy/She
 
 > 功能标签： 识别具有广告拦截、隐私保护、无日志、恶意软件防护等功能的服务器。
 
-> 3. 增强的输出格式
+- 3. 增强的输出格式
 > 选择最适合您需求的输出格式：
 
 > 表格格式： 清晰易读的表格显示（默认）。
@@ -112,7 +112,7 @@ curl -L -o server_status_report.sh https://raw.githubusercontent.com/BuBuxsy/She
 
 > 颜色显示： 更好的视觉效果。
 
-> 4. 统计和推荐
+- 4. 统计和推荐
 > 脚本提供有价值的洞察：
 
 > 测试成功率统计： 分析查询的成功率。
@@ -121,7 +121,7 @@ curl -L -o server_status_report.sh https://raw.githubusercontent.com/BuBuxsy/She
 
 > 特性分类推荐： 根据特定需求（例如隐私、广告拦截、安全）推荐服务器。
 
-> 5. 健壮的错误处理和依赖检查
+- 5. 健壮的错误处理和依赖检查
 > 通过内置检查确保平稳运行：
 
 > 自动依赖检查： 验证必要工具（例如 q、curl）是否存在。
@@ -172,10 +172,11 @@ chmod +x enhanced-doh-test.sh
 ```
 特定测试场景
 使用详细输出和特性检测测试 www.baidu.com：
+``` shell
 
 ./enhanced-doh-test.sh -d www.baidu.com -v -F
-
+```
 将结果以 JSON 格式保存到文件：
-
+``` shell
 ./enhanced-doh-test.sh -f json > results.json 
-
+```
