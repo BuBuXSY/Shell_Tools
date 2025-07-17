@@ -149,7 +149,7 @@ curl -L -o enhanced-doh-test.sh https://raw.githubusercontent.com/BuBuXSY/Shell_
 ```shell
 ./enhanced-doh-test.sh -f json
 ```
-##### 显示特性测试
+##### 显示帮助
 ```shell
 ./enhanced-doh-test.sh -F
 ```
