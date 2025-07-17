@@ -145,6 +145,14 @@ curl -L -o enhanced-doh-test.sh https://raw.githubusercontent.com/BuBuXSY/Shell_
 ```shell
 ./enhanced-doh-test.sh -f json > results.json 
 ```
+##### 网络诊断
+```shell
+./enhanced-doh-test.sh --diagnosis
+```
+##### 调试模式
+```shell
+./enhanced-doh-test.sh --debug
+```
 ##### 设置超时时间（秒）
 ```shell
 ./enhanced-doh-test.sh -t 5
