@@ -163,7 +163,7 @@ curl -L -o enhanced-doh-test.sh https://raw.githubusercontent.com/BuBuXSY/Shell_
 ```shell
 go install github.com/natesales/q@latest
 ```
-▶️ 运行脚本
+- ▶️ 运行脚本
 首先，使脚本可执行：
 ```shell
 chmod +x enhanced-doh-test.sh
@@ -172,7 +172,7 @@ chmod +x enhanced-doh-test.sh
 ```shell
 ./enhanced-doh-test.sh
 ```
-▶️ 特定测试场景
+- ▶️ 特定测试场景
 使用详细输出和特性检测测试 www.baidu.com：
 ``` shell
 
