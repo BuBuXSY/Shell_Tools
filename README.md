@@ -3,18 +3,19 @@
 
 
 ### ⚙️ Linux 系统性能优化  
-
 ```shell
 bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/kernel_optimization.sh)
 ```
+
 ***
 
 ### 🦄 Debian 系自动更新 Nginx（支持 QUIC、Brotli、OCSP、GEOIP2、KTLS）
-
 ```shell
 bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/Auto_Upgrade_Nginx.sh)
 ```
-————————————————————————————————————————————————————————————————————————————————————————————————————————
+
+***
+
 ### 🌍 更新 Country.mmdb 供 Nginx GEOIP2 使用
 ```shell
 bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/update_Country.sh)
@@ -24,7 +25,9 @@ bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/updat
 - 支持企业微信推送（需替换脚本内 webhook Key）
 - 可通过 crontab -e 添加定时任务，如：
 - 0 4 * * * /root/update_Country.sh（每日凌晨4点执行）
-————————————————————————————————————————————————————————————————————————————————————————————————————————
+
+***
+
 ### 🔍 查询访问服务器 IP 并显示地理位置（防刷 DNS）
 ```shell
 bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/search_ip.sh
@@ -45,6 +48,8 @@ bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/insta
 ```
 - 自动化证书申请，简化流程，一键搞定！
 
+***
+
 ### 🌐 测试 DNS 服务器是否支持 EDNS（默认用 AdGuard 推荐列表）
 ```shell
 bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/EDNS_TEST.sh
@@ -62,6 +67,8 @@ bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/colle
 - 0 */12 * * * /etc/mosdns/collect_repeat_dns.sh
 - 脚本会自动清理日志，无需担心日志文件过大。
 
+***
+
 ### 🚀 Frp 最新版自动安装与更新（支持 amd64 和 arm64）
 ```shell
 bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/update_frp.sh
@@ -69,11 +76,15 @@ bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/updat
 ```
 - 脚本自动判断系统架构，自动安装最新版 frps 或 frpc，升级无须选择。
 
+***
+
 ### 🤠 服务器状态推送脚本
 ```shell
 curl -L -o server_status_report.sh https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/server_status_report.sh
 ```
 - 别忘记下载下来之后给予脚本权限并将文中的key改为自己的key哦 再通过crontab -e 来填写需要推送的周期 例：0 */3 * * * /bin/bash /root/server_status_report.sh
+
+***
 
 ### 🌟 全面型 DoH 服务器测试脚本
 - 这个增强版脚本提供了一个全面的方式来测试各种 DNS-over-HTTPS (DoH) 服务器，包括广泛的全球服务提供商，并能检测现代 DNS 特性。
