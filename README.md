@@ -84,86 +84,92 @@ curl -L -o server_status_report.sh https://raw.githubusercontent.com/BuBuxsy/She
 
 > 国内服务商： 阿里、腾讯、360、百度、DNSPod、RubyFish、233py
 
-专业服务： Mullvad、LibreDNS、BlahDNS、CleanBrowsers、ControlD
+> 专业服务： Mullvad、LibreDNS、BlahDNS、CleanBrowsers、ControlD
 
-特殊功能： 隐私保护、广告拦截、恶意软件防护、家庭过滤
+> 特殊功能： 隐私保护、广告拦截、恶意软件防护、家庭过滤
 
-2. 特性检测功能
-它自动检测并验证关键的 DNS 特性：
+> 2. 特性检测功能
+> 它自动检测并验证关键的 DNS 特性：
 
-HTTP/3 支持： 检测并自动使用 HTTP/3。
+> HTTP/3 支持： 检测并自动使用 HTTP/3。
 
-EDNS 支持： 检测扩展 DNS (EDNS) 功能。
+> EDNS 支持： 检测扩展 DNS (EDNS) 功能。
 
-DNSSEC 支持： 检测 DNS 安全扩展 (DNSSEC)。
+> DNSSEC 支持： 检测 DNS 安全扩展 (DNSSEC)。
 
-IPv6 支持： 执行 IPv6 地址测试。
+> IPv6 支持： 执行 IPv6 地址测试。
 
-功能标签： 识别具有广告拦截、隐私保护、无日志、恶意软件防护等功能的服务器。
+> 功能标签： 识别具有广告拦截、隐私保护、无日志、恶意软件防护等功能的服务器。
 
-3. 增强的输出格式
-选择最适合您需求的输出格式：
+> 3. 增强的输出格式
+> 选择最适合您需求的输出格式：
 
-表格格式： 清晰易读的表格显示（默认）。
+> 表格格式： 清晰易读的表格显示（默认）。
 
-JSON 格式： 便于程序处理。
+> JSON 格式： 便于程序处理。
 
-CSV 格式： 适用于数据分析。
+> CSV 格式： 适用于数据分析。
 
-颜色显示： 更好的视觉效果。
+> 颜色显示： 更好的视觉效果。
 
-4. 统计和推荐
-脚本提供有价值的洞察：
+> 4. 统计和推荐
+> 脚本提供有价值的洞察：
 
-测试成功率统计： 分析查询的成功率。
+> 测试成功率统计： 分析查询的成功率。
 
-最佳服务器推荐： 根据地区和用途推荐最佳服务器。
+> 最佳服务器推荐： 根据地区和用途推荐最佳服务器。
 
-特性分类推荐： 根据特定需求（例如隐私、广告拦截、安全）推荐服务器。
+> 特性分类推荐： 根据特定需求（例如隐私、广告拦截、安全）推荐服务器。
 
-5. 健壮的错误处理和依赖检查
-通过内置检查确保平稳运行：
+> 5. 健壮的错误处理和依赖检查
+> 通过内置检查确保平稳运行：
 
-自动依赖检查： 验证必要工具（例如 q、curl）是否存在。
+> 自动依赖检查： 验证必要工具（例如 q、curl）是否存在。
 
-超时处理和错误恢复： 管理超时并尝试从错误中恢复。
+> 超时处理和错误恢复： 管理超时并尝试从错误中恢复。
 
-详细状态显示： 提供清晰的测试过程反馈。
+> 详细状态显示： 提供清晰的测试过程反馈。
 
-命令行参数
-# 基本用法
+#### 命令行参数
+##### 基本用法
+```shell
 ./enhanced-doh-test.sh
-
-# 测试指定域名
+```
+##### 测试指定域名
+``` shell
 ./enhanced-doh-test.sh -d example.com
-
-# 详细输出
+```
+##### 详细输出
+``` shell
 ./enhanced-doh-test.sh -v
-
-# JSON 格式输出
+```
+##### JSON 格式输出
+```shell
 ./enhanced-doh-test.sh -f json
-
-# 显示特性测试
+```
+##### 显示特性测试
+```shell
 ./enhanced-doh-test.sh -F
-
-# 设置超时时间（秒）
+```
+##### 设置超时时间（秒）
+```shell
 ./enhanced-doh-test.sh -t 5
-
-使用示例
+```
+#### 使用示例
 前提条件
 请确保已安装 q 用于解析结果。如果尚未安装，可以使用 Go 进行安装：
-
+```shell
 go install github.com/natesales/q@latest
-
+```
 运行脚本
 首先，使脚本可执行：
-
+```shell
 chmod +x enhanced-doh-test.sh
-
+```
 然后，运行它：
-
+```shell
 ./enhanced-doh-test.sh
-
+```
 特定测试场景
 使用详细输出和特性检测测试 www.baidu.com：
 
@@ -172,5 +178,4 @@ chmod +x enhanced-doh-test.sh
 将结果以 JSON 格式保存到文件：
 
 ./enhanced-doh-test.sh -f json > results.json 
-
 
