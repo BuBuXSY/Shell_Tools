@@ -1,21 +1,21 @@
 # 🚀 各类一键脚本 — 把复杂的东西简单化  
 *(以下均在 Debian 系和 OpenWrt 系统上测试，其他系统需自行调整)*
 
-### ⚙️ Linux 系统性能优化  
+## ⚙️ Linux 系统性能优化  
 ```shell
 bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/kernel_optimization.sh)
 ```
 
 ***
----
-### 🦄 Debian 系自动更新 Nginx（支持 QUIC、Brotli、OCSP、GEOIP2、KTLS）
+
+## 🦄 Debian 系自动更新 Nginx（支持 QUIC、Brotli、OCSP、GEOIP2、KTLS）
 ```shell
 bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/Auto_Upgrade_Nginx.sh)
 ```
 
 ***
 
-### 🌍 更新 Country.mmdb 供 Nginx GEOIP2 使用
+## 🌍 更新 Country.mmdb 供 Nginx GEOIP2 使用
 ```shell
 bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/update_Country.sh)
 ```
@@ -27,7 +27,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/updat
 
 ***
 
-### 🔍 查询访问服务器 IP 并显示地理位置（防刷 DNS）
+## 🔍 查询访问服务器 IP 并显示地理位置（防刷 DNS）
 ```shell
 bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/search_ip.sh
 )
@@ -42,7 +42,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/searc
 
 ***
 
-### 🔐 服务器证书申请与安装（默认 ECC，支持多 CA，限 Nginx）
+## 🔐 服务器证书申请与安装（默认 ECC，支持多 CA，限 Nginx）
 ```shell
 bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/install_cert.sh
 )
@@ -51,7 +51,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/insta
 
 ***
 
-### ⏰ 定时收集 MOSDNS 重复查询域名，优化查询压力
+## ⏰ 定时收集 MOSDNS 重复查询域名，优化查询压力
 ```shell
 bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/collect_repeat_dns.sh
 )
@@ -63,7 +63,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/colle
 
 ***
 
-### 🚀 Frp 最新版自动安装与更新（支持 amd64 和 arm64）
+## 🚀 Frp 最新版自动安装与更新（支持 amd64 和 arm64）
 ```shell
 bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/update_frp.sh
 )
@@ -72,7 +72,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/updat
 
 ***
 
-### 🤠 服务器状态推送脚本
+## 🤠 服务器状态推送脚本
 ```shell
 curl -L -o server_status_report.sh https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/server_status_report.sh
 ```
@@ -80,7 +80,7 @@ curl -L -o server_status_report.sh https://raw.githubusercontent.com/BuBuxsy/She
 
 ***
 
-### 🌟 全面型 DoH 服务器测试脚本
+## 🌟 全面型 DoH 服务器测试脚本
 - 这个增强版脚本提供了一个全面的方式来测试各种 DNS-over-HTTPS (DoH) 服务器，包括广泛的全球服务提供商，并能检测现代 DNS 特性。
 ```shell
 curl -L -o enhanced-doh-test.sh https://raw.githubusercontent.com/BuBuXSY/Shell_Tools/refs/heads/main/enhanced-doh-test.sh
