@@ -206,7 +206,6 @@ show_help() {
 选项:
   -d, --domain DOMAIN    测试域名 (默认: $TEST_DOMAIN)
   -t, --timeout TIMEOUT 超时时间 (默认: ${TIMEOUT}s)
-  -v, --verbose          详细输出
   -f, --format FORMAT    输出格式: table, json, csv (默认: table)
   --debug                调试模式
   --diagnosis            网络诊断
@@ -214,7 +213,6 @@ show_help() {
 
 示例:
   $0                     # 基本测试
-  $0 -v                  # 详细输出
   $0 --diagnosis         # 网络诊断
   $0 --debug             # 调试模式
   $0 -d baidu.com        # 测试指定域名
@@ -233,10 +231,6 @@ while [[ $# -gt 0 ]]; do
         -t|--timeout)
             TIMEOUT="$2"
             shift 2
-            ;;
-        -v|--verbose)
-            VERBOSE=true
-            shift
             ;;
         -f|--format)
             OUTPUT_FORMAT="$2"
