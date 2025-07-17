@@ -141,17 +141,9 @@ curl -L -o enhanced-doh-test.sh https://raw.githubusercontent.com/BuBuXSY/Shell_
 ``` shell
 ./enhanced-doh-test.sh -d example.com
 ```
-##### 详细输出
-``` shell
-./enhanced-doh-test.sh -v
-```
 ##### JSON 格式输出
 ```shell
-./enhanced-doh-test.sh -f json
-```
-##### 显示帮助
-```shell
-./enhanced-doh-test.sh -F
+./enhanced-doh-test.sh -f json > results.json 
 ```
 ##### 设置超时时间（秒）
 ```shell
@@ -171,14 +163,4 @@ chmod +x enhanced-doh-test.sh
 然后，运行它：
 ```shell
 ./enhanced-doh-test.sh
-```
-- ▶️ 特定测试场景
-使用详细输出和特性检测测试 www.baidu.com：
-``` shell
-
-./enhanced-doh-test.sh -d www.baidu.com -v -F
-```
-将结果以 JSON 格式保存到文件：
-``` shell
-./enhanced-doh-test.sh -f json > results.json 
 ```
