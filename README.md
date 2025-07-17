@@ -41,6 +41,8 @@ bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/searc
 
 - 支持企业微信推送（替换 webhook Key）
 
+***
+
 ### 🔐 服务器证书申请与安装（默认 ECC，支持多 CA，限 Nginx）
 ```shell
 bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/install_cert.sh
@@ -56,6 +58,8 @@ bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/EDNS_
 )
 ```
 - 依赖 q，脚本会自动检测并安装。支持 Debian、RedHat、OpenWrt、MacOS。
+
+***
 
 ### ⏰ 定时收集 MOSDNS 重复查询域名，优化查询压力
 ```shell
