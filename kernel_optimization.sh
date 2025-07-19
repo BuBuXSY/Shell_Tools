@@ -1,21 +1,20 @@
 #!/bin/bash
 # Linux 内核优化脚本 - 修复版本
 # BY BuBuXSY
-# Version: 2025.07.19 - Fixed
-
+# Version: 2025.07.19 - Fixed v2
 
 set -euo pipefail  # 严格模式：遇到错误立即退出
 
-# 颜色和样式定义
-readonly RED="\e[1;31m"
-readonly GREEN="\e[1;32m"
-readonly YELLOW="\e[1;33m"
-readonly BLUE="\e[1;34m"
-readonly PURPLE="\e[1;35m"
-readonly CYAN="\e[1;36m"
-readonly WHITE="\e[1;37m"
-readonly BOLD="\e[1m"
-readonly RESET="\e[0m"
+# 颜色和样式定义 - 修复：使用更兼容的转义序列
+readonly RED=$'\033[1;31m'
+readonly GREEN=$'\033[1;32m'
+readonly YELLOW=$'\033[1;33m'
+readonly BLUE=$'\033[1;34m'
+readonly PURPLE=$'\033[1;35m'
+readonly CYAN=$'\033[1;36m'
+readonly WHITE=$'\033[1;37m'
+readonly BOLD=$'\033[1m'
+readonly RESET=$'\033[0m'
 
 # 全局配置
 readonly LOG_FILE="/var/log/kernel_optimization.log"
@@ -26,7 +25,7 @@ readonly EXPORT_DIR="/root/kernel_optimization_exports"
 readonly TEMP_DIR="/tmp/kernel_optimization"
 
 # 脚本版本和元信息
-readonly SCRIPT_VERSION="1.0-fixed"
+readonly SCRIPT_VERSION="1.0-fixed-v2"
 readonly SCRIPT_NAME="Linux内核优化脚本"
 readonly MIN_KERNEL_VERSION="3.10"
 readonly MIN_MEMORY_MB=512
@@ -683,7 +682,13 @@ EOF
     fi
 }
 
-# 预览模式 - 显示将要应用的更改
+# 格式化数值显示（添加千位分隔符）
+format_number() {
+    local number="$1"
+    echo "$number" | sed ':a;s/\B[0-9]\{3\}\>/,&/;ta'
+}
+
+# 修复：预览模式 - 显示将要应用的更改
 show_preview() {
     local optimization_level="${1:-balanced}"
     
@@ -691,7 +696,7 @@ show_preview() {
     print_msg "preview" "预览模式 - 即将应用的更改"
     echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
     
-    # 确保已计算最优参数 - 修复：使用安全的数组长度检查
+    # 确保已计算最优参数
     local optimal_count
     optimal_count=$(safe_array_length OPTIMAL_VALUES)
     if [ "$optimal_count" -eq 0 ]; then
@@ -702,8 +707,10 @@ show_preview() {
     get_current_config
     
     echo -e "\n${CYAN}${BOLD}📊 参数对比预览：${RESET}"
-    printf "${WHITE}%-30s %-15s %-15s %-10s${RESET}\n" "参数名称" "当前值" "新值" "变化"
-    echo -e "${WHITE}──────────────────────────────────────────────────────────────────────────${RESET}"
+    
+    # 修复：使用固定宽度格式化输出，不使用变量传递颜色代码
+    printf "%-35s %-20s %-20s %-10s\n" "参数名称" "当前值" "新值" "变化"
+    printf "%s\n" "────────────────────────────────────────────────────────────────────────────────────"
     
     # 显示主要参数变化
     local preview_params=(
@@ -739,29 +746,46 @@ show_preview() {
         
         current_value=$(safe_array_get CURRENT_VALUES "$param" "未设置")
         
-        # 计算变化
-        local change_indicator=""
+        # 格式化数值显示
+        local formatted_current="${current_value}"
+        local formatted_new="${new_value}"
+        
+        if validate_number "$current_value"; then
+            formatted_current=$(format_number "$current_value")
+        fi
+        
+        if validate_number "$new_value"; then
+            formatted_new=$(format_number "$new_value")
+        fi
+        
+        # 计算变化并显示
+        printf "%-35s " "$param"
+        
+        # 显示当前值（红色）
+        printf "${RED}%-20s${RESET} " "$formatted_current"
+        
+        # 显示新值（绿色）
+        printf "${GREEN}%-20s${RESET} " "$formatted_new"
+        
+        # 显示变化指示符
         if [ "$current_value" = "未设置" ]; then
-            change_indicator="${GREEN}新增${RESET}"
+            echo -e "${GREEN}新增${RESET}"
         elif [ "$current_value" != "$new_value" ]; then
             if validate_number "$current_value" && validate_number "$new_value"; then
                 if [ "$new_value" -gt "$current_value" ]; then
-                    change_indicator="${GREEN}↑${RESET}"
+                    echo -e "${GREEN}↑ 提升${RESET}"
                 else
-                    change_indicator="${RED}↓${RESET}"
+                    echo -e "${RED}↓ 降低${RESET}"
                 fi
             else
-                change_indicator="${YELLOW}修改${RESET}"
+                echo -e "${YELLOW}修改${RESET}"
             fi
         else
-            change_indicator="${BLUE}相同${RESET}"
+            echo -e "${BLUE}相同${RESET}"
         fi
-        
-        printf "${WHITE}%-30s${RESET} ${RED}%-15s${RESET} ${GREEN}%-15s${RESET} %-10s\n" \
-               "$param" "$current_value" "$new_value" "$change_indicator"
     done
     
-    echo -e "${WHITE}──────────────────────────────────────────────────────────────────────────${RESET}"
+    printf "%s\n" "────────────────────────────────────────────────────────────────────────────────────"
     
     # 显示优化摘要
     echo -e "\n${CYAN}${BOLD}📋 优化摘要：${RESET}"
@@ -825,6 +849,87 @@ get_workload_description() {
     esac
 }
 
+# 应用sysctl配置的函数
+apply_sysctl_config() {
+    local config_file="/etc/sysctl.d/99-kernel-optimization.conf"
+    
+    print_msg "working" "生成sysctl配置文件..."
+    
+    # 创建sysctl配置
+    cat > "$config_file" << EOF
+# Linux内核优化配置
+# 由内核优化脚本自动生成 v${SCRIPT_VERSION}
+# 生成时间: $(date)
+# 系统信息: $OS $VER
+# 内核版本: $KERNEL_VERSION
+# 工作负载: $WORKLOAD_TYPE
+# 优化级别: $OPTIMIZATION
+
+# ===========================================
+# 网络优化
+# ===========================================
+
+# TCP/IP堆栈优化
+net.core.somaxconn = $(safe_array_get OPTIMAL_VALUES "somaxconn" "65535")
+net.core.rmem_max = $(safe_array_get OPTIMAL_VALUES "net_core_rmem_max" "134217728")
+net.core.wmem_max = $(safe_array_get OPTIMAL_VALUES "net_core_wmem_max" "134217728")
+net.core.netdev_max_backlog = $(safe_array_get OPTIMAL_VALUES "netdev_max_backlog" "32768")
+
+# TCP优化
+net.ipv4.tcp_max_syn_backlog = $(safe_array_get OPTIMAL_VALUES "tcp_max_syn_backlog" "16384")
+net.ipv4.tcp_syncookies = 1
+net.ipv4.tcp_tw_reuse = 1
+net.ipv4.tcp_fin_timeout = 30
+net.ipv4.tcp_keepalive_time = 1200
+
+# ===========================================
+# 文件系统优化
+# ===========================================
+
+# 文件句柄限制
+fs.file-max = $(safe_array_get OPTIMAL_VALUES "file_max" "1048576")
+
+# inotify限制
+fs.inotify.max_user_watches = $(safe_array_get OPTIMAL_VALUES "inotify_max_user_watches" "524288")
+fs.inotify.max_user_instances = 256
+
+# AIO限制
+fs.aio-max-nr = $(safe_array_get OPTIMAL_VALUES "aio_max_nr" "1048576")
+
+# ===========================================
+# 内存管理优化
+# ===========================================
+
+# 虚拟内存优化
+vm.swappiness = 10
+vm.dirty_ratio = 15
+vm.dirty_background_ratio = 5
+vm.vfs_cache_pressure = 50
+
+# ===========================================
+# 进程和调度优化
+# ===========================================
+
+# 进程限制
+kernel.pid_max = 4194304
+
+# 调度优化
+kernel.sched_migration_cost_ns = 5000000
+
+EOF
+
+    print_msg "success" "配置文件已生成: $config_file"
+    
+    # 应用配置
+    if sysctl -p "$config_file" >/dev/null 2>&1; then
+        print_msg "success" "sysctl配置已生效"
+        return 0
+    else
+        print_msg "error" "sysctl配置应用失败"
+        return 1
+    fi
+}
+
 # 应用优化配置（主函数）
 apply_optimizations() {
     local optimization_level="${1:-balanced}"
@@ -861,7 +966,22 @@ apply_optimizations() {
         return 1
     fi
     
-    print_msg "success" "优化配置应用完成！请重启系统使所有更改生效。"
+    # 应用sysctl配置
+    if ! apply_sysctl_config; then
+        print_msg "error" "配置应用失败"
+        return 1
+    fi
+    
+    print_msg "success" "优化配置应用完成！系统性能已得到提升。"
+    print_msg "info" "建议重启系统以确保所有更改完全生效。"
+    
+    # 显示应用后的配置摘要
+    echo -e "\n${GREEN}${BOLD}✅ 优化完成摘要：${RESET}"
+    echo -e "${WHITE}• 已优化参数数量: $(safe_array_length OPTIMAL_VALUES)个${RESET}"
+    echo -e "${WHITE}• 配置文件位置: /etc/sysctl.d/99-kernel-optimization.conf${RESET}"
+    echo -e "${WHITE}• 备份文件位置: $BACKUP_DIR${RESET}"
+    echo -e "${WHITE}• 日志文件位置: $LOG_FILE${RESET}"
+    
     return 0
 }
 
@@ -965,7 +1085,7 @@ show_main_menu() {
     cat << 'EOF'
 ╔══════════════════════════════════════════════════════════════╗
 ║                    Linux 内核优化脚本                        ║
-║                   Security Enhanced v1.0                    ║
+║                   Security Enhanced v1.0                     ║
 ╚══════════════════════════════════════════════════════════════╝
 EOF
     echo -e "${RESET}"
@@ -1046,12 +1166,14 @@ main_menu() {
 # 显示版本信息
 show_version() {
     echo -e "${PURPLE}${BOLD}Linux内核优化脚本${RESET} ${GREEN}v${SCRIPT_VERSION}${RESET}"
-    echo -e "${WHITE}Security Enhanced Edition - FIXED${RESET}"
+    echo -e "${WHITE}Security Enhanced Edition - FIXED v2${RESET}"
     echo
     echo -e "${CYAN}修复内容:${RESET}"
     echo -e "${WHITE}• 🔧 修复关联数组在严格模式下的访问问题${RESET}"
     echo -e "${WHITE}• 🛡️ 增强数组操作的安全性${RESET}"
-    echo -e "${WHITE}• ✅ 确保在所有情况下都能正常运行${RESET}"
+    echo -e "${WHITE}• 🎨 修复预览模式的颜色显示问题${RESET}"
+    echo -e "${WHITE}• ✅ 优化输出格式和用户体验${RESET}"
+    echo -e "${WHITE}• 📊 改进参数对比表格显示${RESET}"
     echo
     echo -e "${WHITE}作者: Claude (Anthropic) | 许可: MIT License${RESET}"
 }
@@ -1156,10 +1278,10 @@ main() {
     echo -e "${PURPLE}${BOLD}"
     cat << 'EOF'
     ╔═══════════════════════════════════════════════════════════════╗
-    ║             🚀 Linux 内核优化脚本 v1.0-fixed 🚀               ║
+    ║             🚀 Linux 内核优化脚本 v1.0 🚀                     ║
     ║                    Security Enhanced Edition                  ║
     ║                                                               ║
-    ║  智能 • 安全 • 高效 • 可靠 • 已修复                              ║
+    ║  智能 • 安全 • 高效 • 可靠 • 已修复                           ║
     ╚═══════════════════════════════════════════════════════════════╝
 EOF
     echo -e "${RESET}"
