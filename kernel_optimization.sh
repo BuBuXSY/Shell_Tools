@@ -1,7 +1,7 @@
 #!/bin/bash
-# Linux 内核优化脚本 - 修复版本
+# Linux 内核优化脚本
 # BY BuBuXSY
-# Version: 2025.07.19 - Fixed v2
+# Version: 2025.07.19
 
 set -euo pipefail  # 严格模式：遇到错误立即退出
 
@@ -1084,7 +1084,7 @@ show_main_menu() {
     echo -e "${PURPLE}${BOLD}"
     cat << 'EOF'
 ╔══════════════════════════════════════════════════════════════╗
-║                    Linux 内核优化脚本                         ║
+║                    Linux 内核优化脚本                          ║
 ║                   Security Enhanced v1.0                     ║
 ╚══════════════════════════════════════════════════════════════╝
 EOF
