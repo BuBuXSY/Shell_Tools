@@ -69,8 +69,8 @@ error_exit() {
 welcome_message() {
     clear
     echo -e "${CYAN}${BOLD}╔══════════════════════════════════════════════════════════╗${RESET}"
-    echo -e "${CYAN}${BOLD}║          ACME 证书申请自动化工具 - 优化版                  ║${RESET}"
-    echo -e "${CYAN}${BOLD}║                  支持多CA和自动化部署                      ║${RESET}"
+    echo -e "${CYAN}${BOLD}║          ACME 证书申请自动化工具 - 优化版                     ║${RESET}"
+    echo -e "${CYAN}${BOLD}║                  支持多CA和自动化部署                       ║${RESET}"
     echo -e "${CYAN}${BOLD}╚══════════════════════════════════════════════════════════╝${RESET}"
     echo ""
     log "INFO" "工具启动，支持 Let's Encrypt, Buypass, ZeroSSL"
