@@ -148,12 +148,38 @@ check_root() {
 check_compatibility() {
     print_msg "test" "检查系统兼容性..."
     
-    # 检查内核版本
+    # 检查内核版本 - 修复版本比较逻辑
     local kernel_ver=$(uname -r | cut -d. -f1,2)
-    local min_ver_num=$(echo "$MIN_KERNEL_VERSION" | tr -d '.')
-    local cur_ver_num=$(echo "$kernel_ver" | tr -d '.')
     
-    if [ "${cur_ver_num:-0}" -lt "${min_ver_num:-0}" ]; then
+    # 正确的版本比较函数
+    version_compare() {
+        local ver1="$1"
+        local ver2="$2"
+        
+        # 分割版本号
+        local IFS='.'
+        local ver1_parts=($ver1)
+        local ver2_parts=($ver2)
+        
+        # 比较主版本号
+        if [ "${ver1_parts[0]}" -gt "${ver2_parts[0]}" ]; then
+            return 0  # ver1 > ver2
+        elif [ "${ver1_parts[0]}" -lt "${ver2_parts[0]}" ]; then
+            return 1  # ver1 < ver2
+        fi
+        
+        # 主版本号相同，比较次版本号
+        local ver1_minor="${ver1_parts[1]:-0}"
+        local ver2_minor="${ver2_parts[1]:-0}"
+        
+        if [ "$ver1_minor" -ge "$ver2_minor" ]; then
+            return 0  # ver1 >= ver2
+        else
+            return 1  # ver1 < ver2
+        fi
+    }
+    
+    if ! version_compare "$kernel_ver" "$MIN_KERNEL_VERSION"; then
         print_msg "error" "内核版本 $kernel_ver 过低，需要 $MIN_KERNEL_VERSION 或更高版本"
         return 1
     fi
@@ -179,7 +205,7 @@ check_compatibility() {
 
 # ==================== 系统检测函数 ====================
 
-# 安全的发行版检测（移除eval风险）
+# 安全的发行版检测
 detect_distro() {
     print_msg "working" "正在检测Linux发行版..."
     
