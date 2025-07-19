@@ -11,7 +11,7 @@
 - 👁️ **预览模式** - 先预览后应用，安全可控
 - 🧪 **性能测试** - 内置基准测试和健康检查
 
-### 下载和运行
+####  下载和运行
 
 ```bash
 # 下载脚本
@@ -27,16 +27,16 @@ sudo ./kernel_optimization.sh --quick
 sudo ./kernel_optimization.sh --preview
 ```
 
-#### 系统要求
+##### 系统要求
 
 - **操作系统**: Ubuntu, Debian, CentOS, RHEL, Fedora, Arch 等主流发行版
 - **内核版本**: 3.10+ (推荐 4.4+)
 - **内存**: 512MB+ (推荐 1GB+)
 - **权限**: Root 或 sudo
 
-### 📖 基本使用
+#### 📖 基本使用
 
-#### 主要功能
+##### 主要功能
 
 | 功能 | 说明 |
 |------|------|
@@ -47,7 +47,7 @@ sudo ./kernel_optimization.sh --preview
 | 🧪 **性能测试** | 基准测试和健康检查 |
 | 💾 **配置管理** | 备份、导出、导入 |
 
-#### 工作负载类型
+##### 工作负载类型
 
 - **🌐 Web服务器** - Nginx, Apache 高并发优化
 - **🗄️ 数据库服务器** - MySQL, PostgreSQL 内存优化
@@ -55,13 +55,13 @@ sudo ./kernel_optimization.sh --preview
 - **🐳 容器主机** - Docker, K8s 资源管理优化
 - **🏢 通用服务器** - 平衡性能优化
 
-### 优化级别
+##### 优化级别
 
 - **🛡️ 保守模式** - 最小风险，适合生产环境
 - **⚖️ 平衡模式** - 性能与稳定性兼顾（推荐）
 - **🚀 激进模式** - 最大性能，适合高性能计算
 
-#### 命令行选项
+##### 命令行选项
 
 ```bash
 sudo ./kernel_optimization.sh [选项]
@@ -78,7 +78,7 @@ sudo ./kernel_optimization.sh [选项]
 
 ## ⚠️ 重要提醒
 
-### 使用前必读
+#### 使用前必读
 
 - ✅ **测试环境验证** - 建议先在测试环境中验证效果
 - ✅ **自动备份** - 脚本会自动备份原始配置
@@ -124,9 +124,9 @@ tail -f /var/log/kernel_optimization.log
 journalctl -xe
 ```
 
-## 📝 示例
+### 📝 示例
 
-### 基本优化流程
+#### 基本优化流程
 
 ```bash
 # 1. 系统检查
@@ -142,7 +142,7 @@ sudo ./kernel_optimization.sh
 sudo ./kernel_optimization.sh --test
 ```
 
-### Web服务器优化
+#### Web服务器优化
 
 ```bash
 # 使用预设参数优化Web服务器
