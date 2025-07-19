@@ -11,6 +11,7 @@
 # 快速下载运行
 bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/kernel_optimization.sh)
 ```
+```
 # 常用参数
 --quick     # 快速优化（推荐新手）
 --preview   # 预览模式，查看效果不实际应用
