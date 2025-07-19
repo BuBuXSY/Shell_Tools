@@ -1,7 +1,8 @@
 #!/bin/bash
 # Linux 内核优化脚本
-# BY BuBuXSY
-# Version: 2025.07.19
+# By: BuBuXSY
+# Version: 2025-07-19
+# License: MIT
 
 set -euo pipefail  # 严格模式：遇到错误立即退出
 

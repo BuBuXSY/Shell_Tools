@@ -1,8 +1,9 @@
 #!/bin/bash
-
 # FRP 安装和升级脚本
 # 支持 frps 和 frpc 的安装、升级和卸载
 # By: BuBuXSY
+# Version: 2025-07-17
+# License: MIT
 
 
 set -euo pipefail  # 严格模式：遇到错误立即退出

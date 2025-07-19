@@ -3,6 +3,7 @@
 # 支持安装最新主线版本或稳定版本
 # By: BuBuXSY
 # Version: 2025.07.18
+# License: MIT
 
 # 启用严格错误处理
 set -euo pipefail

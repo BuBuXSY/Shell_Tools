@@ -3,7 +3,9 @@
 # 功能: 监控mosdns查询日志，检测重复域名并生成，最后会添加在规则里面辅助减少mosdns对重复域名的查询，重复次数很多的域名服务器直接TTL最大。
 # 依赖: mosdns 日志文件
 # By: BuBuXSY
-# Version: 2025.07.19
+# Version: 2025-07-19
+# License: MIT
+
 
 set -euo pipefail  # 严格模式：遇到错误立即退出
 

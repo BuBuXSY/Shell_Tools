@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # filename: robust-doh-test.sh
 #  全面型 DoH 测试脚本
-# 2025.07.18 
-# By:BuBuXSY
-
+# By: BuBuXSY
+# Version: 2025-07-18
+# License: MIT
 
 # 配置变量
 TEST_DOMAIN="www.google.com"

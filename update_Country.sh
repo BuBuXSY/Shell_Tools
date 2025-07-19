@@ -1,4 +1,8 @@
 #!/bin/bash
+# 更新 GeoIP 国家数据库脚本
+# By: BuBuXSY
+# Version: 2025-07-19
+# License: MIT
 
 # ===== 脚本设置 =====
 set +e

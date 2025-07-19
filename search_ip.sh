@@ -1,4 +1,8 @@
 #!/bin/bash
+# By: BuBuXSY
+# Version: 2025-07-16
+# License: MIT
+
 
 # ========== 配置 ==========
 file_path="/var/log/nginx/access.log"
