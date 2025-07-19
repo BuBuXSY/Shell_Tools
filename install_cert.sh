@@ -5,7 +5,7 @@
 # Version: 2025-07-19
 # License: MIT
 
-set -euo pipefail  # 严格模式
+set -euo pipefail  
 
 # 设置颜色和格式
 readonly RED="\e[31m"
@@ -435,6 +435,117 @@ issue_certificate() {
     fi
 }
 
+# 处理DNS手动验证
+handle_manual_dns_verification() {
+    local output="$1"
+    local operation_type="$2"
+    
+    # 检查是否需要手动添加DNS记录
+    if echo "$output" | grep -q "You need to add the TXT record manually"; then
+        log "INFO" "需要手动添加 DNS TXT 记录"
+        
+        # 提取TXT记录信息
+        local txt_domain=$(echo "$output" | grep "Domain:" | sed "s/.*Domain: '\(.*\)'/\1/" | head -1)
+        local txt_value=$(echo "$output" | grep "TXT value:" | sed "s/.*TXT value: '\(.*\)'/\1/" | head -1)
+        
+        if [[ -z "$txt_domain" || -z "$txt_value" ]]; then
+            # 尝试另一种提取方式
+            txt_domain=$(echo "$output" | grep -oP "Domain:\s*['\"]?\K[^'\"]*" | head -1)
+            txt_value=$(echo "$output" | grep -oP "TXT value:\s*['\"]?\K[^'\"]*" | head -1)
+        fi
+        
+        if [[ -n "$txt_domain" && -n "$txt_value" ]]; then
+            echo ""
+            echo -e "${YELLOW}${BOLD}请添加以下 DNS TXT 记录：${RESET}"
+            echo -e "${CYAN}记录名称：${RESET} $txt_domain"
+            echo -e "${CYAN}记录类型：${RESET} TXT" 
+            echo -e "${CYAN}记录值：${RESET} $txt_value"
+            echo -e "${CYAN}TTL：${RESET} 600 (或最小值)"
+            echo ""
+            
+            # 等待用户确认
+            while true; do
+                read -p "是否已完成 DNS 记录添加？[y/N/q]: " dns_choice
+                case "$dns_choice" in
+                    [Yy]*)
+                        log "INFO" "用户确认已添加 DNS 记录，继续验证..."
+                        
+                        # 验证DNS记录
+                        if verify_dns_record "${txt_domain#_acme-challenge.}" "$txt_value"; then
+                            log "SUCCESS" "DNS 记录验证成功，继续证书操作..."
+                            
+                            # 继续执行证书验证
+                            local final_result
+                            case "$operation_type" in
+                                "renew")
+                                    final_result=$(acme.sh --renew --ecc -d "$DOMAIN" 2>&1 || true)
+                                    ;;
+                                "force_renew")
+                                    final_result=$(acme.sh --renew --ecc -d "$DOMAIN" --force 2>&1 || true)
+                                    ;;
+                            esac
+                            
+                            if echo "$final_result" | grep -q "Success"; then
+                                log "SUCCESS" "证书${operation_type}成功"
+                                return 0
+                            else
+                                log "ERROR" "证书${operation_type}失败"
+                                echo "$final_result"
+                                return 1
+                            fi
+                        else
+                            log "WARN" "DNS 记录验证失败"
+                            read -p "是否强制继续？[y/N]: " force_continue
+                            if [[ "$force_continue" =~ ^[Yy]$ ]]; then
+                                log "INFO" "强制继续证书验证..."
+                                local final_result
+                                case "$operation_type" in
+                                    "renew")
+                                        final_result=$(acme.sh --renew --ecc -d "$DOMAIN" 2>&1 || true)
+                                        ;;
+                                    "force_renew")
+                                        final_result=$(acme.sh --renew --ecc -d "$DOMAIN" --force 2>&1 || true)
+                                        ;;
+                                esac
+                                
+                                if echo "$final_result" | grep -q "Success"; then
+                                    log "SUCCESS" "证书${operation_type}成功"
+                                    return 0
+                                else
+                                    log "ERROR" "证书${operation_type}失败"
+                                    echo "$final_result"
+                                    return 1
+                                fi
+                            fi
+                        fi
+                        ;;
+                    [Qq]*)
+                        log "INFO" "用户取消操作"
+                        exit 0
+                        ;;
+                    *)
+                        log "INFO" "请先添加 DNS 记录后再确认"
+                        ;;
+                esac
+            done
+        else
+            log "ERROR" "无法提取 DNS 记录信息"
+            echo "$output"
+            return 1
+        fi
+    else
+        # 不需要手动DNS验证，检查其他结果
+        if echo "$output" | grep -q "Success"; then
+            log "SUCCESS" "证书${operation_type}成功"
+            return 0
+        else
+            log "ERROR" "证书${operation_type}失败"
+            echo "$output"
+            return 1
+        fi
+    fi
+}
+
 # 续期证书
 renew_certificate() {
     log "INFO" "开始续期证书: $DOMAIN"
@@ -452,12 +563,11 @@ renew_certificate() {
         else
             log "INFO" "续期操作已跳过"
         fi
-    elif echo "$renewal_output" | grep -q "Success"; then
-        log "SUCCESS" "证书续期成功"
     else
-        log "ERROR" "证书续期失败"
-        echo "$renewal_output"
-        error_exit "续期失败"
+        # 处理可能的DNS手动验证
+        if ! handle_manual_dns_verification "$renewal_output" "renew"; then
+            error_exit "证书续期失败"
+        fi
     fi
 }
 
@@ -465,9 +575,11 @@ renew_certificate() {
 force_renew_certificate() {
     log "INFO" "强制更新证书: $DOMAIN"
     
-    if acme.sh --renew --ecc -d "$DOMAIN" --force; then
-        log "SUCCESS" "证书强制更新成功"
-    else
+    local renewal_output
+    renewal_output=$(acme.sh --renew --ecc -d "$DOMAIN" --force 2>&1 || true)
+    
+    # 处理可能的DNS手动验证
+    if ! handle_manual_dns_verification "$renewal_output" "force_renew"; then
         error_exit "证书强制更新失败"
     fi
 }
