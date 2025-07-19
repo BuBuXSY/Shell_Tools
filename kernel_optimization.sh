@@ -26,7 +26,7 @@ readonly EXPORT_DIR="/root/kernel_optimization_exports"
 readonly TEMP_DIR="/tmp/kernel_optimization"
 
 # 脚本版本和元信息
-readonly SCRIPT_VERSION="5.0"
+readonly SCRIPT_VERSION="1.0"
 readonly SCRIPT_NAME="Linux内核优化脚本"
 readonly MIN_KERNEL_VERSION="3.10"
 readonly MIN_MEMORY_MB=512
