@@ -56,7 +56,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/insta
 bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/collect_repeat_dns.sh
 )
 ```
-# ✨ 功能特性
+### ✨ 功能特性
 - 搭配 MOSDNS 使用，开启 mosdns.log info 级别，默认路径 /etc/mosdns/mosdns.log。
 - 🔍 自动分析 mosdns 日志文件
 - 📊 统计域名查询频率
@@ -65,9 +65,9 @@ bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/colle
 - 📈 历史数据记录
 - ⚙️ 灵活的配置管理
 
-## 🚀 快速开始
+#### 🚀 快速开始
 
-### 1. 下载脚本
+##### 1. 下载脚本
 
 ```bash
 # 下载脚本文件
@@ -75,7 +75,7 @@ wget https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/collect_repeat_d
 chmod +x collect_repeat_dns.sh
 ```
 
-### 2. 首次运行
+##### 2. 首次运行
 
 ```bash
 # 直接运行，会自动生成配置文件
@@ -84,7 +84,7 @@ chmod +x collect_repeat_dns.sh
 
 脚本会自动创建配置文件 `dns_monitor.conf`，请根据需要修改。
 
-### 3. 配置企业微信通知
+##### 3. 配置企业微信通知
 
 编辑配置文件：
 
@@ -102,7 +102,7 @@ WECHAT_WEBHOOK_URL="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=你的K
 THRESHOLD=500
 ```
 
-## ⚙️ 主要配置选项
+##### ⚙️ 主要配置选项
 
 | 配置项 | 说明 | 默认值 |
 |--------|------|--------|
@@ -112,9 +112,9 @@ THRESHOLD=500
 | `WECHAT_WEBHOOK_URL` | 企业微信通知地址 | 需要配置 |
 | `BLACKLIST_DOMAINS` | 域名黑名单 | `("localhost" "*.local" "*.test")` |
 
-## 🕐 设置定时任务
+##### 🕐 设置定时任务
 
-### 方法一：使用 crontab
+###### 方法一：使用 crontab
 
 ```bash
 # 编辑定时任务
@@ -127,7 +127,7 @@ crontab -e
 0 2 * * * /path/to/collect_repeat_dns.sh >/dev/null 2>&1
 ```
 
-### 方法二：使用 systemd timer
+###### 方法二：使用 systemd timer
 
 创建服务文件：
 
@@ -162,61 +162,7 @@ systemctl daemon-reload
 systemctl enable collect_repeat_dns.timer
 systemctl start collect_repeat_dns.timer
 ```
-
-## 📋 使用流程
-
-1. **脚本运行** → 分析 mosdns 日志
-2. **域名提取** → 统计查询频率  
-3. **阈值过滤** → 找出重复域名
-4. **生成规则** → 保存到规则文件
-5. **发送通知** → 企业微信推送结果
-6. **清空日志** → 为下次分析准备
-
-## 📊 输出文件说明
-
-### 规则文件
-- **位置**: `/etc/mosdns/rules/repeat_domain.txt`
-- **格式**: `full:domain.com`
-- **用途**: 导入到 mosdns 进行域名拦截
-
-### 日志文件
-- **位置**: `/var/log/dns_monitor.log`
-- **内容**: 脚本运行日志和错误信息
-
-### 历史记录
-- **位置**: `/var/log/dns_monitor_history.json`
-- **格式**: JSON 数组
-- **用途**: 查询趋势分析
-
-## 🔧 常见问题
-
-### Q: 脚本提示权限错误怎么办？
-```bash
-# 确保脚本有执行权限
-chmod +x collect_repeat_dns.sh
-
-# 确保对日志目录有读写权限
-sudo chown -R $USER:$USER /etc/mosdns/
-```
-
-### Q: 企业微信通知不工作？
-1. 检查 Webhook URL 是否正确
-2. 确认机器人已添加到群组
-3. 检查网络连接是否正常
-
-### Q: 没有找到重复域名？
-1. 检查日志文件是否有数据
-2. 确认阈值设置是否合理
-3. 查看脚本运行日志了解详情
-
-### Q: 如何调整监控阈值？
-编辑配置文件中的 `THRESHOLD` 值：
-```bash
-# 例如改为 100 次
-THRESHOLD=100
-```
-
-## 🔍 查看运行状态
+###### 🔍 查看运行状态
 
 ```bash
 # 查看最近的运行日志
