@@ -17,40 +17,60 @@
 
 ## 🛠️ 系统优化类
 
-### 🎯 Linux内核参数优化工具
+# Linux内核优化脚本 v2.0
 
-**💡 作用：** 智能化调优系统内核参数，提升服务器性能
+一键优化Linux内核参数，提升服务器性能的自动化脚本。
+
+## 功能特点
+
+- 🚀 **一键优化**：针对Web、数据库、代理服务器等不同场景
+- 📊 **参数对比**：清晰显示优化前后的参数变化
+- 🔄 **安全回滚**：自动备份，支持一键恢复
+- 🎯 **智能适配**：自动检测系统版本和环境
+
+## 支持系统
+
+- Ubuntu, Debian, CentOS, RHEL, Fedora, Arch Linux
+- 内核版本 >= 3.10
+- 需要 root 权限
+
+## 安装使用
 
 ```bash
-# 🚀 一键运行
-bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/kernel_optimization.sh)
+# 下载脚本
+wget https://raw.githubusercontent.com/your-repo/optimize.sh
+chmod +x optimize.sh
+
+# 运行脚本
+sudo ./optimize.sh
 ```
 
-#### 📋 使用方法
+## 快速命令
 
 ```bash
-# 🔰 新手推荐：快速优化
-./kernel_optimization.sh --quick
+# VPS代理服务器优化（推荐）
+sudo ./optimize.sh --proxy
 
-# 👀 预览模式：查看效果不实际应用  
-./kernel_optimization.sh --preview
+# Web服务器优化
+sudo ./optimize.sh --web
 
-# 🔙 回滚配置：恢复到最近备份
-./kernel_optimization.sh --rollback
+# 数据库服务器优化
+sudo ./optimize.sh --database
 
-# 🧪 性能测试：验证优化效果
-./kernel_optimization.sh --test
+# 查看优化效果对比
+sudo ./optimize.sh --compare
+
+# 预览模式（不实际应用）
+sudo ./optimize.sh --proxy --preview
 ```
 
-#### ✨ 特色功能
+## 文件位置
 
-| 功能 | 图标 | 说明 |
-|------|------|------|
-| 智能配置向导 | 🧙‍♂️ | 自动推荐最优参数 |
-| 多场景支持 | 🎯 | Web服务器/数据库/缓存/容器 |
-| 安全增强 | 🛡️ | 完整备份回滚机制 |
-| 性能测试 | 🧪 | 内置测试和健康检查 |
-
+```
+/etc/sysctl.d/99-kernel-optimization.conf     # 优化配置文件
+/var/backups/kernel_optimization/             # 备份目录
+/var/log/kernel_optimization.log              # 操作日志
+```
 ---
 
 ## 🌐 Web服务类
