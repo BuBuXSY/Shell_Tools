@@ -1,10 +1,10 @@
 #!/bin/bash
 # Linux 内核优化脚本 v2.0
 # By: BuBuXSY
-# Version: 2.0
+# Version: 2.2-enhanced
 # 2025-07-25
 # License: MIT
-# 特性: 智能系统检测 + 分层菜单设计 + IPv6可选禁用 + 错误处理优化
+
 
 set -euo pipefail
 
@@ -23,7 +23,7 @@ readonly RESET=$'\033[0m'
 readonly LOG_FILE="/var/log/kernel_optimization.log"
 readonly BACKUP_DIR="/var/backups/kernel_optimization"
 readonly SYSCTL_CONF="/etc/sysctl.d/99-kernel-optimization.conf"
-readonly SCRIPT_VERSION="2.0-complete-full"
+readonly SCRIPT_VERSION="2.2-enhanced"
 
 # 全局变量
 OS=""
@@ -41,6 +41,8 @@ AUTO_ROLLBACK_ENABLED=false
 DRY_RUN=false
 OPTIMIZATION_LEVEL=""
 WORKLOAD_TYPE=""
+ENABLE_BBR=false
+BBR_SUPPORTED=false
 
 # 优化参数存储
 declare -A OPTIMAL_VALUES=()
@@ -83,6 +85,99 @@ check_command() {
     command -v "$1" >/dev/null 2>&1
 }
 
+# 检查并安装依赖
+check_dependencies() {
+    print_msg "working" "检查系统依赖..."
+    
+    local missing_deps=()
+    local required_commands=("sysctl" "awk" "grep" "head" "tail")
+    
+    for cmd in "${required_commands[@]}"; do
+        if ! check_command "$cmd"; then
+            missing_deps+=("$cmd")
+        fi
+    done
+    
+    # bc是可选的，用于精确计算
+    if ! check_command "bc"; then
+        print_msg "warning" "bc命令未安装，将使用bash内置算术（精度较低）"
+        print_msg "info" "建议安装bc获得更精确的计算: apt install bc 或 yum install bc"
+    fi
+    
+    if [ ${#missing_deps[@]} -gt 0 ]; then
+        print_msg "error" "缺少必要依赖: ${missing_deps[*]}"
+        case "$DISTRO_FAMILY" in
+            "debian")
+                print_msg "info" "请运行: apt update && apt install ${missing_deps[*]}"
+                ;;
+            "redhat")
+                print_msg "info" "请运行: yum install ${missing_deps[*]} 或 dnf install ${missing_deps[*]}"
+                ;;
+            *)
+                print_msg "info" "请使用包管理器安装: ${missing_deps[*]}"
+                ;;
+        esac
+        exit 1
+    fi
+    
+    print_msg "success" "依赖检查完成"
+}
+
+# 修复后的安全数值计算函数
+safe_calculate() {
+    local operation="$1"
+    local num1="$2" 
+    local num2="$3"
+    
+    # 验证输入是否为数字
+    if ! [[ "$num1" =~ ^[0-9]+(\.[0-9]+)?$ ]] || ! [[ "$num2" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+        echo "1"
+        return 1
+    fi
+    
+    # 避免除零错误
+    if [ "$operation" = "divide" ] && [ "$num2" = "0" ]; then
+        echo "1"
+        return 1
+    fi
+    
+    # 使用bash算术避免bc依赖问题
+    local result=""
+    case "$operation" in
+        "divide")
+            if [ "$num2" != "0" ]; then
+                # 使用bc进行精确计算，失败则使用bash算术
+                if check_command "bc" && result=$(echo "scale=1; $num1 / $num2" | bc -l 2>/dev/null) && [ -n "$result" ]; then
+                    echo "$result"
+                else
+                    # bash整数除法
+                    echo "$((num1 / num2))"
+                fi
+            else
+                echo "1"
+            fi
+            ;;
+        "multiply")
+            if check_command "bc" && result=$(echo "scale=1; $num1 * $num2" | bc -l 2>/dev/null) && [ -n "$result" ]; then
+                echo "$result"
+            else
+                echo "$((num1 * num2))"
+            fi
+            ;;
+        *)
+            echo "1"
+            return 1
+            ;;
+    esac
+}
+
+# 标准化参数值（处理空格差异）
+normalize_param_value() {
+    local value="$1"
+    # 将多个空格或制表符替换为单个空格，并去除首尾空格
+    echo "$value" | sed 's/[[:space:]]\+/ /g' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
+}
+
 # 数值验证
 validate_number() {
     local value="$1"
@@ -104,6 +199,87 @@ check_root() {
         exit 1
     fi
     print_msg "success" "已获取root权限"
+}
+
+# ==================== BBR支持检测和配置 ====================
+
+# 检测BBR支持
+detect_bbr_support() {
+    print_msg "working" "检测BBR拥塞控制算法支持..."
+    
+    BBR_SUPPORTED=false
+    
+    # 检查内核是否支持BBR
+    if [ -f /proc/sys/net/ipv4/tcp_available_congestion_control ]; then
+        if grep -q bbr /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null; then
+            BBR_SUPPORTED=true
+            print_msg "success" "检测到内核支持BBR拥塞控制算法"
+        else
+            print_msg "info" "内核不支持BBR拥塞控制算法"
+            print_msg "info" "BBR需要Linux内核4.9或更高版本"
+        fi
+    else
+        print_msg "warning" "无法检测BBR支持状态"
+    fi
+    
+    # 检查当前拥塞控制算法
+    local current_cc=""
+    if current_cc=$(cat /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null); then
+        print_msg "info" "当前拥塞控制算法: $current_cc"
+    fi
+}
+
+# 询问用户是否启用BBR
+ask_user_bbr_preference() {
+    if [ "$BBR_SUPPORTED" = true ]; then
+        echo
+        echo -e "${CYAN}${BOLD}🚀 BBR拥塞控制算法选项：${RESET}"
+        echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+        echo -e "${GREEN}BBR (Bottleneck Bandwidth and RTT) 是由Google开发的拥塞控制算法${RESET}"
+        echo -e "${WHITE}• 优势: 大幅提升网络吞吐量，特别是高延迟网络${RESET}"
+        echo -e "${WHITE}• 适用: 代理服务器、CDN、高流量应用${RESET}"
+        echo -e "${WHITE}• 兼容: Linux内核4.9+${RESET}"
+        echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+        
+        while true; do
+            print_msg "question" "是否启用BBR拥塞控制算法？[Y/n]: "
+            read -r -t 30 bbr_choice || bbr_choice=""
+            case "$bbr_choice" in
+                [Nn]|[Nn][Oo])
+                    ENABLE_BBR=false
+                    print_msg "info" "已选择: 不启用BBR，使用默认算法"
+                    break
+                    ;;
+                [Yy]|[Yy][Ee][Ss]|"")
+                    ENABLE_BBR=true
+                    print_msg "info" "已选择: 启用BBR拥塞控制算法"
+                    break
+                    ;;
+                *)
+                    print_msg "warning" "请输入 y/Y 或 n/N，默认为 Y"
+                    ;;
+            esac
+        done
+    else
+        ENABLE_BBR=false
+        print_msg "info" "系统不支持BBR，将使用默认拥塞控制算法"
+    fi
+}
+
+# 配置BBR
+configure_bbr() {
+    if [ "$ENABLE_BBR" = true ] && [ "$BBR_SUPPORTED" = true ]; then
+        print_msg "working" "配置BBR拥塞控制算法..."
+        
+        # 设置BBR拥塞控制算法
+        OPTIMAL_VALUES["net.ipv4.tcp_congestion_control"]="bbr"
+        
+        # 设置队列调度算法为fq（推荐与BBR配合使用）
+        OPTIMAL_VALUES["net.core.default_qdisc"]="fq"
+        
+        print_msg "success" "已配置BBR拥塞控制算法"
+        log "BBR配置: tcp_congestion_control=bbr, default_qdisc=fq"
+    fi
 }
 
 # ==================== 系统检测函数 ====================
@@ -262,10 +438,12 @@ perform_deep_system_detection() {
     print_msg "working" "执行深度系统检测和分析..."
     
     detect_distro
+    check_dependencies
     detect_resources
     analyze_system_profile
     detect_kernel_features
     detect_container_environment
+    detect_bbr_support
     
     show_system_analysis_results
     print_msg "success" "深度系统检测完成"
@@ -283,14 +461,15 @@ show_system_analysis_results() {
     echo -e "${WHITE}• 系统配置档案: ${GREEN}$SYSTEM_PROFILE${RESET}"
     echo -e "${WHITE}• 内核特性: ${GREEN}${KERNEL_FEATURES:-无检测到}${RESET}"
     echo -e "${WHITE}• 运行环境: ${GREEN}$ENV_TYPE${RESET}"
+    echo -e "${WHITE}• BBR支持: ${GREEN}$([ "$BBR_SUPPORTED" = true ] && echo "支持" || echo "不支持")${RESET}"
     echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
     echo
     echo -e "${WHITE}┌─────────────────────────────────────────┐${RESET}"
     echo -e "${WHITE}│            ${BOLD}系统资源${RESET}${WHITE}                     │${RESET}"
     echo -e "${WHITE}├─────────────────────────────────────────┤${RESET}"
-    echo -e "${WHITE}│ 💾 物理内存: ${GREEN}${TOTAL_MEM_GB} GB${WHITE}                   │${RESET}"
-    echo -e "${WHITE}│ 🖥️  CPU核心数: ${GREEN}${CPU_CORES}${WHITE}                        │${RESET}"
-    echo -e "${WHITE}│ 🏗️  架构: ${GREEN}$(uname -m)${WHITE}                    │${RESET}"
+    echo -e "${WHITE}│ 💾 物理内存: ${GREEN}${TOTAL_MEM_GB} GB${WHITE}                       │${RESET}"
+    echo -e "${WHITE}│ 🖥️  CPU核心数: ${GREEN}${CPU_CORES}${WHITE}                       │${RESET}"
+    echo -e "${WHITE}│ 🏗️  架构: ${GREEN}$(uname -m)${WHITE}                       │${RESET}"
     echo -e "${WHITE}│ 🐧 内核版本: ${GREEN}${KERNEL_VERSION}${WHITE}           │${RESET}"
     echo -e "${WHITE}└─────────────────────────────────────────┘${RESET}"
     echo
@@ -390,7 +569,6 @@ set_common_parameters() {
             OPTIMAL_VALUES["net.core.wmem_max"]=16777216
             OPTIMAL_VALUES["net.ipv4.tcp_rmem"]="4096 87380 16777216"
             OPTIMAL_VALUES["net.ipv4.tcp_wmem"]="4096 65536 16777216"
-            OPTIMAL_VALUES["net.ipv4.tcp_congestion_control"]="bbr"
             ;;
         "balanced")
             OPTIMAL_VALUES["net.core.rmem_default"]=131072
@@ -443,6 +621,413 @@ apply_parameter_limits() {
     fi
 }
 
+# ==================== 修复后的参数对比功能 ====================
+
+# 读取当前系统参数值
+read_current_system_values() {
+    print_msg "working" "读取当前系统参数值进行对比..."
+    
+    # 清空原始值数组
+    ORIGINAL_VALUES=()
+    
+    local count=0
+    # 读取即将要优化的参数的当前值
+    for param in "${!OPTIMAL_VALUES[@]}"; do
+        local current_value=""
+        
+        # 尝试读取当前参数值，添加超时保护
+        if current_value=$(timeout 5 sysctl -n "$param" 2>/dev/null); then
+            # 标准化参数值
+            ORIGINAL_VALUES["$param"]=$(normalize_param_value "$current_value")
+        else
+            # 如果参数不存在或无法读取，标记为"未设置"
+            ORIGINAL_VALUES["$param"]="未设置"
+        fi
+        ((count++))
+    done
+    
+    print_msg "success" "已读取 ${count} 个参数的当前值"
+}
+
+# 修复后的参数变化分析
+analyze_parameter_changes() {
+    print_msg "working" "分析参数变化..."
+    
+    local new_params=0
+    local modified_params=0  
+    local unchanged_params=0
+    
+    # 清空变化数组
+    PARAMETER_CHANGES=()
+    
+    for param in "${!OPTIMAL_VALUES[@]}"; do
+        local original="${ORIGINAL_VALUES[$param]:-未设置}"
+        local optimized=$(normalize_param_value "${OPTIMAL_VALUES[$param]}")
+        
+        if [ "$original" = "未设置" ]; then
+            PARAMETER_CHANGES["$param"]="NEW"
+            ((new_params++))
+        elif [ "$original" != "$optimized" ]; then
+            PARAMETER_CHANGES["$param"]="MODIFIED"
+            ((modified_params++))
+        else
+            PARAMETER_CHANGES["$param"]="UNCHANGED"  
+            ((unchanged_params++))
+        fi
+    done
+    
+    print_msg "info" "参数变化统计: 新增${new_params}个, 修改${modified_params}个, 不变${unchanged_params}个"
+}
+
+# 修复后的参数对比表显示
+show_parameter_comparison() {
+    echo
+    echo -e "${CYAN}${BOLD}📊 参数优化对比表：${RESET}"
+    echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    printf "%-40s %-20s %-20s %-15s %-15s\n" "参数名称" "原始值" "优化后值" "变化类型" "影响说明"
+    echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    
+    # 按类别排序显示参数，添加错误处理
+    show_network_parameters_comparison || print_msg "warning" "网络参数显示时出现错误"
+    show_memory_parameters_comparison || print_msg "warning" "内存参数显示时出现错误"
+    show_kernel_parameters_comparison || print_msg "warning" "内核参数显示时出现错误"
+    show_ipv6_parameters_comparison || print_msg "warning" "IPv6参数显示时出现错误"
+    show_bbr_parameters_comparison || print_msg "warning" "BBR参数显示时出现错误"
+    
+    echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+}
+
+# 修复后的单个参数对比显示
+show_single_parameter_comparison() {
+    local param="$1"
+    local original="${ORIGINAL_VALUES[$param]:-未设置}"
+    local optimized=$(normalize_param_value "${OPTIMAL_VALUES[$param]}")
+    local change_type="${PARAMETER_CHANGES[$param]:-UNKNOWN}"
+    local status_color=""
+    local status_text=""
+    local impact_text=""
+    
+    # 根据变化类型设置颜色和状态
+    case "$change_type" in
+        "NEW")
+            status_color="${GREEN}"
+            status_text="新增"
+            impact_text="添加优化"
+            ;;
+        "MODIFIED")
+            # 分析具体的变化情况 - 添加错误处理
+            if [ "$original" != "未设置" ] && [[ "$original" =~ ^[0-9]+$ ]] && [[ "$optimized" =~ ^[0-9]+$ ]]; then
+                # 安全的数值比较
+                if [ "$optimized" -gt "$original" ] 2>/dev/null; then
+                    status_color="${YELLOW}"
+                    status_text="增大"
+                    local ratio=$(safe_calculate "divide" "$optimized" "$original")
+                    impact_text="提升${ratio}倍"
+                elif [ "$optimized" -lt "$original" ] 2>/dev/null; then
+                    status_color="${BLUE}"
+                    status_text="减小"
+                    local ratio=$(safe_calculate "divide" "$original" "$optimized")
+                    impact_text="降低${ratio}倍"
+                else
+                    status_color="${WHITE}"
+                    status_text="相等"
+                    impact_text="无变化"
+                fi
+            else
+                status_color="${PURPLE}"
+                status_text="更改"
+                impact_text="配置调整"
+            fi
+            ;;
+        "UNCHANGED")
+            status_color="${WHITE}"
+            status_text="不变"
+            impact_text="保持现状"
+            ;;
+        *)
+            status_color="${RED}"
+            status_text="未知"
+            impact_text="待分析"
+            ;;
+    esac
+    
+    # 格式化显示 - 添加错误处理
+    printf "%-40s ${WHITE}%-20s${RESET} ${GREEN}%-20s${RESET} ${status_color}%-15s${RESET} ${CYAN}%-15s${RESET}\n" \
+        "$param" \
+        "$(format_value_display "$original")" \
+        "$(format_value_display "$optimized")" \
+        "$status_text" \
+        "$impact_text" 2>/dev/null || printf "%-40s %-20s %-20s %-15s %-15s\n" "$param" "$original" "$optimized" "显示错误" "---"
+}
+
+# 显示网络参数对比
+show_network_parameters_comparison() {
+    echo -e "${BLUE}${BOLD}🌐 网络参数优化：${RESET}"
+    
+    local network_params=(
+        "net.core.somaxconn"
+        "net.core.netdev_max_backlog" 
+        "net.core.rmem_max"
+        "net.core.wmem_max"
+        "net.core.rmem_default"
+        "net.core.wmem_default"
+        "net.ipv4.tcp_max_syn_backlog"
+        "net.ipv4.tcp_max_tw_buckets"
+        "net.ipv4.ip_local_port_range"
+        "net.ipv4.tcp_rmem"
+        "net.ipv4.tcp_wmem"
+    )
+    
+    for param in "${network_params[@]}"; do
+        if [[ -v OPTIMAL_VALUES["$param"] ]]; then
+            show_single_parameter_comparison "$param" || continue
+        fi
+    done
+    return 0
+}
+
+# 显示内存参数对比
+show_memory_parameters_comparison() {
+    echo -e "${PURPLE}${BOLD}💾 内存管理参数：${RESET}"
+    
+    local memory_params=(
+        "vm.swappiness"
+        "vm.dirty_ratio"
+        "vm.dirty_background_ratio"
+        "vm.vfs_cache_pressure"
+        "kernel.shmmax"
+        "kernel.shmall"
+    )
+    
+    for param in "${memory_params[@]}"; do
+        if [[ -v OPTIMAL_VALUES["$param"] ]]; then
+            show_single_parameter_comparison "$param" || continue
+        fi
+    done
+    return 0
+}
+
+# 显示内核参数对比
+show_kernel_parameters_comparison() {
+    echo -e "${GREEN}${BOLD}🔧 内核参数优化：${RESET}"
+    
+    local kernel_params=(
+        "fs.file-max"
+        "kernel.pid_max"
+        "net.ipv4.tcp_syncookies"
+        "net.ipv4.tcp_tw_reuse"
+        "net.ipv4.tcp_fin_timeout"
+        "net.ipv4.tcp_keepalive_time"
+        "net.ipv4.tcp_keepalive_probes"
+        "net.ipv4.tcp_keepalive_intvl"
+    )
+    
+    for param in "${kernel_params[@]}"; do
+        if [[ -v OPTIMAL_VALUES["$param"] ]]; then
+            show_single_parameter_comparison "$param" || continue
+        fi
+    done
+    return 0
+}
+
+# 显示IPv6参数对比
+show_ipv6_parameters_comparison() {
+    if [ "$DISABLE_IPV6" = true ]; then
+        echo -e "${RED}${BOLD}🚫 IPv6禁用参数：${RESET}"
+        
+        local ipv6_params=(
+            "net.ipv6.conf.all.disable_ipv6"
+            "net.ipv6.conf.default.disable_ipv6"
+            "net.ipv6.conf.lo.disable_ipv6"
+        )
+        
+        for param in "${ipv6_params[@]}"; do
+            if [[ -v OPTIMAL_VALUES["$param"] ]]; then
+                show_single_parameter_comparison "$param" || continue
+            fi
+        done
+    fi
+    return 0
+}
+
+# 显示BBR参数对比
+show_bbr_parameters_comparison() {
+    if [ "$ENABLE_BBR" = true ]; then
+        echo -e "${CYAN}${BOLD}🚀 BBR拥塞控制参数：${RESET}"
+        
+        local bbr_params=(
+            "net.ipv4.tcp_congestion_control"
+            "net.core.default_qdisc"
+        )
+        
+        for param in "${bbr_params[@]}"; do
+            if [[ -v OPTIMAL_VALUES["$param"] ]]; then
+                show_single_parameter_comparison "$param" || continue
+            fi
+        done
+    fi
+    return 0
+}
+
+# 格式化参数值显示
+format_value_display() {
+    local value="$1"
+    
+    # 如果值太长，截断显示
+    if [ ${#value} -gt 18 ]; then
+        echo "${value:0:15}..."
+    else
+        echo "$value"
+    fi
+}
+
+# 修复后的关键性能提升分析
+show_performance_improvements() {
+    echo
+    echo -e "${CYAN}${BOLD}⚡ 关键性能提升分析：${RESET}"
+    echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    
+    # 分析连接处理能力提升 - 添加错误处理
+    analyze_connection_improvements || print_msg "warning" "连接分析时出现错误"
+    
+    # 分析内存优化效果
+    analyze_memory_improvements || print_msg "warning" "内存分析时出现错误"
+    
+    # 分析网络性能提升
+    analyze_network_improvements || print_msg "warning" "网络分析时出现错误"
+    
+    # 分析IPv6优化效果
+    if [ "$DISABLE_IPV6" = true ]; then
+        analyze_ipv6_improvements || print_msg "warning" "IPv6分析时出现错误"
+    fi
+    
+    # 分析BBR优化效果
+    if [ "$ENABLE_BBR" = true ]; then
+        analyze_bbr_improvements || print_msg "warning" "BBR分析时出现错误"
+    fi
+    
+    echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+}
+
+# 修复后的连接处理能力提升分析
+analyze_connection_improvements() {
+    if [[ -v OPTIMAL_VALUES["net.core.somaxconn"] ]]; then
+        local original_somaxconn="${ORIGINAL_VALUES[net.core.somaxconn]:-128}"
+        local optimized_somaxconn="${OPTIMAL_VALUES[net.core.somaxconn]}"
+        
+        # 确保都是数字，添加错误处理
+        if [[ "$original_somaxconn" =~ ^[0-9]+$ ]] && [[ "$optimized_somaxconn" =~ ^[0-9]+$ ]]; then
+            if [ "$optimized_somaxconn" -gt "$original_somaxconn" ] 2>/dev/null; then
+                local improvement=$(safe_calculate "divide" "$optimized_somaxconn" "$original_somaxconn")
+                echo -e "${GREEN}🔗 并发连接处理能力: ${WHITE}${original_somaxconn} → ${GREEN}${optimized_somaxconn} ${YELLOW}(提升${improvement}倍)${RESET}"
+            elif [ "$optimized_somaxconn" -lt "$original_somaxconn" ] 2>/dev/null; then
+                echo -e "${GREEN}🔗 并发连接处理能力: ${WHITE}${original_somaxconn} → ${YELLOW}${optimized_somaxconn} ${BLUE}(调整为更适合的值)${RESET}"
+            else
+                echo -e "${GREEN}🔗 并发连接处理能力: ${WHITE}${original_somaxconn} → ${GREEN}${optimized_somaxconn} ${BLUE}(值未改变,已是最优)${RESET}"
+            fi
+        fi
+    fi
+    
+    if [[ -v OPTIMAL_VALUES["fs.file-max"] ]]; then
+        local original_filemax="${ORIGINAL_VALUES[fs.file-max]:-65536}"
+        local optimized_filemax="${OPTIMAL_VALUES[fs.file-max]}"
+        
+        if [[ "$original_filemax" =~ ^[0-9]+$ ]] && [[ "$optimized_filemax" =~ ^[0-9]+$ ]]; then
+            if [ "$optimized_filemax" -gt "$original_filemax" ] 2>/dev/null; then
+                local improvement=$(safe_calculate "divide" "$optimized_filemax" "$original_filemax")
+                echo -e "${GREEN}📁 文件句柄处理能力: ${WHITE}${original_filemax} → ${GREEN}${optimized_filemax} ${YELLOW}(提升${improvement}倍)${RESET}"
+            elif [ "$optimized_filemax" -eq "$original_filemax" ] 2>/dev/null; then
+                echo -e "${GREEN}📁 文件句柄处理能力: ${WHITE}${original_filemax} → ${GREEN}${optimized_filemax} ${BLUE}(保持最优值)${RESET}"
+            else
+                echo -e "${GREEN}📁 文件句柄处理能力: ${WHITE}${original_filemax} → ${YELLOW}${optimized_filemax} ${BLUE}(调整为合适值)${RESET}"
+            fi
+        fi
+    fi
+    return 0
+}
+
+# 修复后的内存优化效果分析
+analyze_memory_improvements() {
+    if [[ -v OPTIMAL_VALUES["vm.swappiness"] ]]; then
+        local original_swappiness="${ORIGINAL_VALUES[vm.swappiness]:-60}"
+        local optimized_swappiness="${OPTIMAL_VALUES[vm.swappiness]}"
+        
+        if [ "$original_swappiness" != "$optimized_swappiness" ]; then
+            if [ "$optimized_swappiness" -lt "$original_swappiness" ] 2>/dev/null; then
+                echo -e "${PURPLE}💾 内存交换策略: ${WHITE}${original_swappiness} → ${GREEN}${optimized_swappiness} ${YELLOW}(减少swap使用,提升响应速度)${RESET}"
+            elif [ "$optimized_swappiness" -gt "$original_swappiness" ] 2>/dev/null; then
+                echo -e "${PURPLE}💾 内存交换策略: ${WHITE}${original_swappiness} → ${GREEN}${optimized_swappiness} ${YELLOW}(适度增加swap,平衡内存使用)${RESET}"
+            fi
+        else
+            echo -e "${PURPLE}💾 内存交换策略: ${WHITE}${original_swappiness} → ${GREEN}${optimized_swappiness} ${BLUE}(已是最优值)${RESET}"
+        fi
+    fi
+    
+    if [[ -v OPTIMAL_VALUES["vm.dirty_ratio"] ]]; then
+        local original_dirty="${ORIGINAL_VALUES[vm.dirty_ratio]:-20}"
+        local optimized_dirty="${OPTIMAL_VALUES[vm.dirty_ratio]}"
+        
+        if [ "$original_dirty" != "$optimized_dirty" ]; then
+            if [ "$optimized_dirty" -lt "$original_dirty" ] 2>/dev/null; then
+                echo -e "${PURPLE}🖊️  磁盘写入策略: ${WHITE}${original_dirty}% → ${GREEN}${optimized_dirty}% ${YELLOW}(降低缓存占比,减少I/O延迟)${RESET}"
+            elif [ "$optimized_dirty" -gt "$original_dirty" ] 2>/dev/null; then
+                echo -e "${PURPLE}🖊️  磁盘写入策略: ${WHITE}${original_dirty}% → ${GREEN}${optimized_dirty}% ${YELLOW}(增加缓存占比,提升吞吐量)${RESET}"
+            fi
+        else
+            echo -e "${PURPLE}🖊️  磁盘写入策略: ${WHITE}${original_dirty}% → ${GREEN}${optimized_dirty}% ${BLUE}(保持最优值)${RESET}"
+        fi
+    fi
+    return 0
+}
+
+# 修复后的网络性能提升分析
+analyze_network_improvements() {
+    if [[ -v OPTIMAL_VALUES["net.core.rmem_max"] ]]; then
+        local original_rmem="${ORIGINAL_VALUES[net.core.rmem_max]:-212992}"
+        local optimized_rmem="${OPTIMAL_VALUES[net.core.rmem_max]}"
+        
+        if [[ "$original_rmem" =~ ^[0-9]+$ ]] && [[ "$optimized_rmem" =~ ^[0-9]+$ ]]; then
+            if [ "$optimized_rmem" -gt "$original_rmem" ] 2>/dev/null; then
+                local improvement=$(safe_calculate "divide" "$optimized_rmem" "$original_rmem")
+                echo -e "${BLUE}📥 网络接收缓冲区: ${WHITE}$(format_bytes $original_rmem) → ${GREEN}$(format_bytes $optimized_rmem) ${YELLOW}(增大${improvement}倍,提升网络性能)${RESET}"
+            elif [ "$optimized_rmem" -lt "$original_rmem" ] 2>/dev/null; then
+                local reduction=$(safe_calculate "divide" "$original_rmem" "$optimized_rmem")
+                echo -e "${BLUE}📥 网络接收缓冲区: ${WHITE}$(format_bytes $original_rmem) → ${GREEN}$(format_bytes $optimized_rmem) ${YELLOW}(调整为合适大小,节省内存)${RESET}"
+            else
+                echo -e "${BLUE}📥 网络接收缓冲区: ${WHITE}$(format_bytes $original_rmem) → ${GREEN}$(format_bytes $optimized_rmem) ${BLUE}(保持最优值)${RESET}"
+            fi
+        fi
+    fi
+    return 0
+}
+
+# IPv6优化效果分析
+analyze_ipv6_improvements() {
+    echo -e "${RED}🚫 IPv6完全禁用: ${WHITE}启用 → ${GREEN}禁用 ${YELLOW}(消除IPv6处理开销,适合代理服务器)${RESET}"
+    return 0
+}
+
+# BBR优化效果分析
+analyze_bbr_improvements() {
+    echo -e "${CYAN}🚀 BBR拥塞控制: ${WHITE}启用 → ${GREEN}BBR ${YELLOW}(大幅提升网络吞吐量和延迟优化)${RESET}"
+    return 0
+}
+
+# 格式化字节数显示
+format_bytes() {
+    local bytes="$1"
+    
+    if [ "$bytes" -ge 1073741824 ] 2>/dev/null; then
+        echo "$((bytes / 1073741824))GB"
+    elif [ "$bytes" -ge 1048576 ] 2>/dev/null; then
+        echo "$((bytes / 1048576))MB"
+    elif [ "$bytes" -ge 1024 ] 2>/dev/null; then
+        echo "$((bytes / 1024))KB"
+    else
+        echo "${bytes}B"
+    fi
+}
+
 # ==================== 菜单系统 ====================
 
 # 显示主菜单
@@ -450,8 +1035,8 @@ show_main_menu() {
     clear
     echo -e "${CYAN}${BOLD}"
     echo "╔══════════════════════════════════════════════════════════════════════════════╗"
-    echo "║                    🚀 Linux内核优化脚本 v2.0 🚀                              ║"
-    echo "║                         智能系统优化解决方案                                 ║"
+    echo "║                      🚀 Linux内核优化脚本 v2.0 🚀                            ║"
+    echo "║                          智能系统优化解决方案                                ║"
     echo "╚══════════════════════════════════════════════════════════════════════════════╝"
     echo -e "${RESET}"
     echo
@@ -460,8 +1045,7 @@ show_main_menu() {
     echo -e "${GREEN}🚀 1) 一键优化模式${RESET}     - 预设最佳方案，新手友好"
     echo -e "${BLUE}🧙‍♂️ 2) 自定义配置模式${RESET}   - 完全自定义，高级用户"
     echo -e "${PURPLE}📊 3) 系统信息查看${RESET}     - 查看详细系统信息"
-    echo -e "${CYAN}📋 4) 查看优化对比${RESET}     - 查看当前优化效果对比"
-    echo -e "${YELLOW}🔄 5) 恢复默认配置${RESET}     - 回滚到优化前状态"
+    echo -e "${YELLOW}🔄 4) 恢复默认配置${RESET}     - 回滚到优化前状态"
     echo -e "${RED}❌ 0) 退出${RESET}"
     echo
 }
@@ -492,8 +1076,8 @@ show_custom_configuration_menu() {
     clear
     echo -e "${BLUE}${BOLD}"
     echo "╔══════════════════════════════════════════════════════════════════════════════╗"
-    echo "║                      🧙‍♂️ 自定义配置模式 🧙‍♂️                                   ║"
-    echo "║                     完全自定义，精细化控制                                      ║"
+    echo "║                         🧙‍♂️ 自定义配置模式 🧙‍♂️                           ║"
+    echo "║                        完全自定义，精细化控制                                ║"
     echo "╚══════════════════════════════════════════════════════════════════════════════╝"
     echo -e "${RESET}"
     echo
@@ -520,364 +1104,219 @@ show_optimization_level_menu() {
     echo
 }
 
-# 高级选项菜单
+# 高级选项菜单（增强版，避免卡住）
 show_advanced_options_menu() {
     echo
     echo -e "${WHITE}步骤3: 高级选项${RESET}"
     echo
-    print_msg "question" "是否禁用IPv6？(代理服务器建议禁用) [y/N]"
-    read -r ipv6_choice
-    case "$ipv6_choice" in
-        [Yy]|[Yy][Ee][Ss]) DISABLE_IPV6=true ;;
-        *) DISABLE_IPV6=false ;;
-    esac
     
-    print_msg "question" "是否启用自动回滚？(可在24小时内自动恢复) [Y/n]"
-    read -r rollback_choice
-    case "$rollback_choice" in
-        [Nn]|[Nn][Oo]) AUTO_ROLLBACK_ENABLED=false ;;
-        *) AUTO_ROLLBACK_ENABLED=true ;;
-    esac
+    # IPv6选择
+    while true; do
+        print_msg "question" "是否禁用IPv6？(代理服务器建议禁用) [y/N]: "
+        read -r -t 30 ipv6_choice || ipv6_choice=""
+        case "$ipv6_choice" in
+            [Yy]|[Yy][Ee][Ss]) 
+                DISABLE_IPV6=true
+                print_msg "info" "已选择: 禁用IPv6"
+                break
+                ;;
+            [Nn]|[Nn][Oo]|"") 
+                DISABLE_IPV6=false 
+                print_msg "info" "已选择: 保持IPv6启用"
+                break
+                ;;
+            *) 
+                print_msg "warning" "请输入 y/Y 或 n/N，默认为 N"
+                ;;
+        esac
+    done
     
-    print_msg "question" "是否启用预览模式？(只显示配置不实际应用) [y/N]"
-    read -r preview_choice
-    case "$preview_choice" in
-        [Yy]|[Yy][Ee][Ss]) DRY_RUN=true ;;
-        *) DRY_RUN=false ;;
-    esac
+    # BBR选择
+    ask_user_bbr_preference
+    
+    # 自动回滚选择
+    while true; do
+        print_msg "question" "是否启用自动回滚？(可在24小时内自动恢复) [Y/n]: "
+        read -r -t 30 rollback_choice || rollback_choice=""
+        case "$rollback_choice" in
+            [Nn]|[Nn][Oo]) 
+                AUTO_ROLLBACK_ENABLED=false
+                print_msg "info" "已选择: 禁用自动回滚"
+                break
+                ;;
+            [Yy]|[Yy][Ee][Ss]|"") 
+                AUTO_ROLLBACK_ENABLED=true
+                print_msg "info" "已选择: 启用自动回滚"
+                break
+                ;;
+            *) 
+                print_msg "warning" "请输入 y/Y 或 n/N，默认为 Y"
+                ;;
+        esac
+    done
+    
+    # 预览模式选择
+    while true; do
+        print_msg "question" "是否启用预览模式？(只显示配置不实际应用) [y/N]: "
+        read -r -t 30 preview_choice || preview_choice=""
+        case "$preview_choice" in
+            [Yy]|[Yy][Ee][Ss]) 
+                DRY_RUN=true
+                print_msg "info" "已选择: 启用预览模式"
+                break
+                ;;
+            [Nn]|[Nn][Oo]|"") 
+                DRY_RUN=false
+                print_msg "info" "已选择: 实际应用配置"
+                break
+                ;;
+            *) 
+                print_msg "warning" "请输入 y/Y 或 n/N，默认为 N"
+                ;;
+        esac
+    done
 }
 
-# ==================== 参数对比功能 ====================
+# ==================== 修复后的配置应用和查看功能 ====================
 
-# 读取当前系统参数值
-read_current_system_values() {
-    print_msg "working" "读取当前系统参数值进行对比..."
+# 备份当前配置
+backup_current_config() {
+    print_msg "working" "备份当前系统配置..."
     
-    # 清空原始值数组
-    ORIGINAL_VALUES=()
+    local backup_file="$BACKUP_DIR/sysctl_backup_$(date +%Y%m%d_%H%M%S).conf"
     
-    # 读取即将要优化的参数的当前值
+    # 备份当前的sysctl配置
+    if sysctl -a > "$backup_file" 2>/dev/null; then
+        chmod 600 "$backup_file"
+        print_msg "success" "配置已备份到: $backup_file"
+        log "配置备份: $backup_file"
+    else
+        print_msg "warning" "无法完整备份配置，继续执行..."
+    fi
+}
+
+# 生成配置文件
+generate_config_file() {
+    print_msg "working" "生成优化配置文件..."
+    
+    cat > "$SYSCTL_CONF" << EOF
+# Linux内核优化配置
+# 生成时间: $(date)
+# 脚本版本: $SCRIPT_VERSION
+# 工作负载: $WORKLOAD_TYPE
+# 优化级别: $OPTIMIZATION_LEVEL
+# IPv6禁用: $DISABLE_IPV6
+# BBR启用: $ENABLE_BBR
+
+EOF
+
+    # 写入所有优化参数
     for param in "${!OPTIMAL_VALUES[@]}"; do
-        local current_value=""
-        
-        # 尝试读取当前参数值
-        if current_value=$(sysctl -n "$param" 2>/dev/null); then
-            ORIGINAL_VALUES["$param"]="$current_value"
-        else
-            # 如果参数不存在或无法读取，标记为"未设置"
-            ORIGINAL_VALUES["$param"]="未设置"
-        fi
+        echo "$param = ${OPTIMAL_VALUES[$param]}" >> "$SYSCTL_CONF"
     done
     
-    print_msg "success" "已读取 ${#ORIGINAL_VALUES[@]} 个参数的当前值"
+    print_msg "success" "配置文件已生成: $SYSCTL_CONF"
 }
 
-# 分析参数变化
-analyze_parameter_changes() {
-    print_msg "working" "分析参数变化..."
+# 应用配置
+apply_configuration() {
+    if [ "$DRY_RUN" = true ]; then
+        show_preview_configuration
+        return 0
+    fi
     
-    local new_params=0
-    local modified_params=0  
-    local unchanged_params=0
+    print_msg "working" "根据系统特性验证并应用配置..."
     
-    PARAMETER_CHANGES=()
+    # 读取当前系统参数值进行对比
+    read_current_system_values
     
+    # 分析参数变化
+    analyze_parameter_changes
+    
+    local success_count=0
+    local fail_count=0
+    local failed_params=()
+    
+    # 逐个应用参数
     for param in "${!OPTIMAL_VALUES[@]}"; do
-        local original="${ORIGINAL_VALUES[$param]:-未设置}"
-        local optimized="${OPTIMAL_VALUES[$param]}"
+        local value="${OPTIMAL_VALUES[$param]}"
         
-        if [ "$original" = "未设置" ]; then
-            PARAMETER_CHANGES["$param"]="NEW"
-            ((new_params++))
-        elif [ "$original" != "$optimized" ]; then
-            PARAMETER_CHANGES["$param"]="MODIFIED"
-            ((modified_params++))
+        if sysctl -w "$param=$value" >/dev/null 2>&1; then
+            ((success_count++))
         else
-            PARAMETER_CHANGES["$param"]="UNCHANGED"  
-            ((unchanged_params++))
+            ((fail_count++))
+            failed_params+=("$param=$value")
+            print_msg "warning" "参数应用失败: $param=$value"
         fi
     done
     
-    print_msg "info" "参数变化统计: 新增${new_params}个, 修改${modified_params}个, 不变${unchanged_params}个"
+    print_msg "info" "配置应用结果: $success_count/$((success_count + fail_count)) 个参数成功应用"
+    
+    if [ $fail_count -gt 0 ]; then
+        print_msg "warning" "部分配置参数应用失败($fail_count个)"
+        create_clean_config_file "${failed_params[@]}"
+        print_msg "info" "已创建清理版配置文件"
+        print_msg "info" "系统优化仍然有效,只是跳过了不兼容的参数"
+    fi
+    
+    print_msg "success" "优化配置应用完成!系统性能已得到提升。"
+    
+    # 显示BBR配置提示
+    if [ "$ENABLE_BBR" = true ]; then
+        print_msg "info" "BBR拥塞控制算法已启用，网络性能将得到显著提升"
+    fi
+    
+    print_msg "info" "建议重启系统以确保所有更改完全生效。"
+    
+    # 显示详细优化报告
+    show_detailed_optimization_report
+    
+    show_optimization_summary $success_count $fail_count
 }
 
-# 显示参数对比表
-show_parameter_comparison() {
-    echo
-    echo -e "${CYAN}${BOLD}📊 参数优化对比表：${RESET}"
-    echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-    printf "%-40s %-20s %-20s %-10s\n" "参数名称" "原始值" "优化后值" "状态"
-    echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+# 创建清理版配置文件
+create_clean_config_file() {
+    local failed_params=("$@")
+    local clean_config="${SYSCTL_CONF}-clean.conf"
     
-    # 按类别排序显示参数
-    show_network_parameters_comparison
-    show_memory_parameters_comparison  
-    show_kernel_parameters_comparison
-    show_ipv6_parameters_comparison
+    # 复制原配置文件头部
+    head -n 9 "$SYSCTL_CONF" > "$clean_config"
     
-    echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-}
-
-# 显示网络参数对比
-show_network_parameters_comparison() {
-    echo -e "${BLUE}${BOLD}🌐 网络参数优化：${RESET}"
-    
-    local network_params=(
-        "net.core.somaxconn"
-        "net.core.netdev_max_backlog" 
-        "net.core.rmem_max"
-        "net.core.wmem_max"
-        "net.core.rmem_default"
-        "net.core.wmem_default"
-        "net.ipv4.tcp_max_syn_backlog"
-        "net.ipv4.tcp_max_tw_buckets"
-        "net.ipv4.ip_local_port_range"
-        "net.ipv4.tcp_rmem"
-        "net.ipv4.tcp_wmem"
-        "net.ipv4.tcp_congestion_control"
-    )
-    
-    for param in "${network_params[@]}"; do
-        if [[ -v OPTIMAL_VALUES["$param"] ]]; then
-            show_single_parameter_comparison "$param"
-        fi
-    done
-}
-
-# 显示内存参数对比
-show_memory_parameters_comparison() {
-    echo -e "${PURPLE}${BOLD}💾 内存管理参数：${RESET}"
-    
-    local memory_params=(
-        "vm.swappiness"
-        "vm.dirty_ratio"
-        "vm.dirty_background_ratio"
-        "vm.vfs_cache_pressure"
-        "kernel.shmmax"
-        "kernel.shmall"
-    )
-    
-    for param in "${memory_params[@]}"; do
-        if [[ -v OPTIMAL_VALUES["$param"] ]]; then
-            show_single_parameter_comparison "$param"
-        fi
-    done
-}
-
-# 显示内核参数对比
-show_kernel_parameters_comparison() {
-    echo -e "${GREEN}${BOLD}🔧 内核参数优化：${RESET}"
-    
-    local kernel_params=(
-        "fs.file-max"
-        "kernel.pid_max"
-        "net.ipv4.tcp_syncookies"
-        "net.ipv4.tcp_tw_reuse"
-        "net.ipv4.tcp_fin_timeout"
-        "net.ipv4.tcp_keepalive_time"
-        "net.ipv4.tcp_keepalive_probes"
-        "net.ipv4.tcp_keepalive_intvl"
-    )
-    
-    for param in "${kernel_params[@]}"; do
-        if [[ -v OPTIMAL_VALUES["$param"] ]]; then
-            show_single_parameter_comparison "$param"
-        fi
-    done
-}
-
-# 显示IPv6参数对比
-show_ipv6_parameters_comparison() {
-    if [ "$DISABLE_IPV6" = true ]; then
-        echo -e "${RED}${BOLD}🚫 IPv6禁用参数：${RESET}"
+    # 添加成功的参数
+    for param in "${!OPTIMAL_VALUES[@]}"; do
+        local param_line="$param = ${OPTIMAL_VALUES[$param]}"
+        local is_failed=false
         
-        local ipv6_params=(
-            "net.ipv6.conf.all.disable_ipv6"
-            "net.ipv6.conf.default.disable_ipv6"
-            "net.ipv6.conf.lo.disable_ipv6"
-        )
-        
-        for param in "${ipv6_params[@]}"; do
-            if [[ -v OPTIMAL_VALUES["$param"] ]]; then
-                show_single_parameter_comparison "$param"
+        for failed in "${failed_params[@]}"; do
+            if [[ "$param_line" == "$failed" ]]; then
+                is_failed=true
+                break
             fi
         done
-    fi
+        
+        if [ "$is_failed" = false ]; then
+            echo "$param_line" >> "$clean_config"
+        fi
+    done
 }
 
-# 显示单个参数对比
-show_single_parameter_comparison() {
-    local param="$1"
-    local original="${ORIGINAL_VALUES[$param]:-未设置}"
-    local optimized="${OPTIMAL_VALUES[$param]}"
-    local change_type="${PARAMETER_CHANGES[$param]:-UNKNOWN}"
-    local status_color=""
-    local status_text=""
+# 显示预览配置
+show_preview_configuration() {
+    # 读取当前系统参数值进行对比
+    read_current_system_values
+    analyze_parameter_changes
     
-    # 根据变化类型设置颜色和状态
-    case "$change_type" in
-        "NEW")
-            status_color="${GREEN}"
-            status_text="新增"
-            ;;
-        "MODIFIED")
-            status_color="${YELLOW}"
-            status_text="修改"
-            ;;
-        "UNCHANGED")
-            status_color="${BLUE}"
-            status_text="不变"
-            ;;
-        *)
-            status_color="${WHITE}"
-            status_text="未知"
-            ;;
-    esac
-    
-    # 格式化显示
-    printf "%-40s ${WHITE}%-20s${RESET} ${GREEN}%-20s${RESET} ${status_color}%-10s${RESET}\n" \
-        "$param" \
-        "$(format_value_display "$original")" \
-        "$(format_value_display "$optimized")" \
-        "$status_text"
-}
-
-# 格式化参数值显示
-format_value_display() {
-    local value="$1"
-    
-    # 如果值太长，截断显示
-    if [ ${#value} -gt 18 ]; then
-        echo "${value:0:15}..."
-    else
-        echo "$value"
-    fi
-}
-
-# 显示关键性能提升
-show_performance_improvements() {
     echo
-    echo -e "${CYAN}${BOLD}⚡ 关键性能提升分析：${RESET}"
-    echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    print_msg "preview" "配置预览模式 - 以下是将要应用的参数对比："
     
-    # 分析连接处理能力提升
-    analyze_connection_improvements
-    
-    # 分析内存优化效果
-    analyze_memory_improvements
-    
-    # 分析网络性能提升
-    analyze_network_improvements
-    
-    # 分析IPv6优化效果
-    if [ "$DISABLE_IPV6" = true ]; then
-        analyze_ipv6_improvements
-    fi
-    
-    echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-}
-
-# 分析连接处理能力提升
-analyze_connection_improvements() {
-    if [[ -v OPTIMAL_VALUES["net.core.somaxconn"] ]]; then
-        local original_somaxconn="${ORIGINAL_VALUES[net.core.somaxconn]:-128}"
-        local optimized_somaxconn="${OPTIMAL_VALUES[net.core.somaxconn]}"
-        
-        # 计算提升倍数
-        if [[ "$original_somaxconn" =~ ^[0-9]+$ ]] && [[ "$optimized_somaxconn" =~ ^[0-9]+$ ]] && [ "$original_somaxconn" -gt 0 ]; then
-            local improvement=$((optimized_somaxconn / original_somaxconn))
-            echo -e "${GREEN}🔗 并发连接处理能力: ${WHITE}${original_somaxconn} → ${GREEN}${optimized_somaxconn} ${YELLOW}(提升${improvement}倍)${RESET}"
-        fi
-    fi
-    
-    if [[ -v OPTIMAL_VALUES["fs.file-max"] ]]; then
-        local original_filemax="${ORIGINAL_VALUES[fs.file-max]:-65536}"
-        local optimized_filemax="${OPTIMAL_VALUES[fs.file-max]}"
-        
-        if [[ "$original_filemax" =~ ^[0-9]+$ ]] && [[ "$optimized_filemax" =~ ^[0-9]+$ ]] && [ "$original_filemax" -gt 0 ]; then
-            local improvement=$((optimized_filemax / original_filemax))
-            echo -e "${GREEN}📁 文件句柄处理能力: ${WHITE}${original_filemax} → ${GREEN}${optimized_filemax} ${YELLOW}(提升${improvement}倍)${RESET}"
-        fi
-    fi
-}
-
-# 分析内存优化效果
-analyze_memory_improvements() {
-    if [[ -v OPTIMAL_VALUES["vm.swappiness"] ]]; then
-        local original_swappiness="${ORIGINAL_VALUES[vm.swappiness]:-60}"
-        local optimized_swappiness="${OPTIMAL_VALUES[vm.swappiness]}"
-        
-        if [ "$original_swappiness" != "$optimized_swappiness" ]; then
-            echo -e "${PURPLE}💾 内存交换策略: ${WHITE}${original_swappiness} → ${GREEN}${optimized_swappiness} ${YELLOW}(减少不必要的swap使用)${RESET}"
-        fi
-    fi
-    
-    if [[ -v OPTIMAL_VALUES["vm.dirty_ratio"] ]]; then
-        local original_dirty="${ORIGINAL_VALUES[vm.dirty_ratio]:-20}"
-        local optimized_dirty="${OPTIMAL_VALUES[vm.dirty_ratio]}"
-        
-        if [ "$original_dirty" != "$optimized_dirty" ]; then
-            echo -e "${PURPLE}🖊️  磁盘写入策略: ${WHITE}${original_dirty}% → ${GREEN}${optimized_dirty}% ${YELLOW}(优化I/O性能)${RESET}"
-        fi
-    fi
-}
-
-# 分析网络性能提升
-analyze_network_improvements() {
-    if [[ -v OPTIMAL_VALUES["net.core.rmem_max"] ]]; then
-        local original_rmem="${ORIGINAL_VALUES[net.core.rmem_max]:-212992}"
-        local optimized_rmem="${OPTIMAL_VALUES[net.core.rmem_max]}"
-        
-        if [[ "$original_rmem" =~ ^[0-9]+$ ]] && [[ "$optimized_rmem" =~ ^[0-9]+$ ]] && [ "$original_rmem" -gt 0 ]; then
-            local improvement=$((optimized_rmem / original_rmem))
-            echo -e "${BLUE}📥 网络接收缓冲区: ${WHITE}$(format_bytes $original_rmem) → ${GREEN}$(format_bytes $optimized_rmem) ${YELLOW}(提升${improvement}倍)${RESET}"
-        fi
-    fi
-    
-    if [[ -v OPTIMAL_VALUES["net.ipv4.tcp_congestion_control"] ]]; then
-        local original_cc="${ORIGINAL_VALUES[net.ipv4.tcp_congestion_control]:-cubic}"
-        local optimized_cc="${OPTIMAL_VALUES[net.ipv4.tcp_congestion_control]}"
-        
-        if [ "$original_cc" != "$optimized_cc" ] && [ "$optimized_cc" = "bbr" ]; then
-            echo -e "${BLUE}🚀 拥塞控制算法: ${WHITE}${original_cc} → ${GREEN}${optimized_cc} ${YELLOW}(大幅提升网络吞吐量)${RESET}"
-        fi
-    fi
-}
-
-# 分析IPv6优化效果
-analyze_ipv6_improvements() {
-    echo -e "${RED}🚫 IPv6完全禁用: ${WHITE}启用 → ${GREEN}禁用 ${YELLOW}(消除IPv6处理开销,适合代理服务器)${RESET}"
-}
-
-# 格式化字节数显示
-format_bytes() {
-    local bytes="$1"
-    
-    if [ "$bytes" -ge 1073741824 ]; then
-        echo "$((bytes / 1073741824))GB"
-    elif [ "$bytes" -ge 1048576 ]; then
-        echo "$((bytes / 1048576))MB"
-    elif [ "$bytes" -ge 1024 ]; then
-        echo "$((bytes / 1024))KB"
-    else
-        echo "${bytes}B"
-    fi
-}
-
-# 显示详细优化报告
-show_detailed_optimization_report() {
-    echo
-    echo -e "${CYAN}${BOLD}📋 详细优化报告：${RESET}"
-    echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-    
-    # 显示参数对比表
+    # 显示详细对比
     show_parameter_comparison
-    
-    # 显示性能提升分析
     show_performance_improvements
-    
-    # 显示工作负载特定的优化说明
     show_workload_specific_optimizations
+    
+    echo
+    print_msg "info" "预览完成，未实际应用任何更改"
+    print_msg "info" "要实际应用这些优化，请重新运行并选择非预览模式"
 }
 
 # 显示工作负载特定优化说明
@@ -909,6 +1348,9 @@ show_workload_specific_optimizations() {
             echo -e "${WHITE}• 完全禁用IPv6，消除处理开销${RESET}"
             echo -e "${WHITE}• 全端口范围开放(1024-65535)${RESET}"
             echo -e "${WHITE}• 超大网络缓冲区(4倍rmem/wmem)${RESET}"
+            if [ "$ENABLE_BBR" = true ]; then
+                echo -e "${WHITE}• 启用BBR拥塞控制，大幅提升代理性能${RESET}"
+            fi
             ;;
         "container")
             echo -e "${CYAN}🐳 容器主机优化重点：${RESET}"
@@ -932,161 +1374,27 @@ show_workload_specific_optimizations() {
             ;;
     esac
     
+    if [ "$ENABLE_BBR" = true ]; then
+        echo -e "${CYAN}• 🚀 BBR拥塞控制算法将显著提升网络吞吐量${RESET}"
+    fi
+    
     echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
 }
 
-# 备份当前配置
-backup_current_config() {
-    print_msg "working" "备份当前系统配置..."
-    
-    local backup_file="$BACKUP_DIR/sysctl_backup_$(date +%Y%m%d_%H%M%S).conf"
-    
-    # 备份当前的sysctl配置
-    if sysctl -a > "$backup_file" 2>/dev/null; then
-        chmod 600 "$backup_file"
-        print_msg "success" "配置已备份到: $backup_file"
-        log "配置备份: $backup_file"
-    else
-        print_msg "warning" "无法完整备份配置，继续执行..."
-    fi
-}
-
-# 生成配置文件
-generate_config_file() {
-    print_msg "working" "生成优化配置文件..."
-    
-    cat > "$SYSCTL_CONF" << EOF
-# Linux内核优化配置
-# 生成时间: $(date)
-# 脚本版本: $SCRIPT_VERSION
-# 工作负载: $WORKLOAD_TYPE
-# 优化级别: $OPTIMIZATION_LEVEL
-# IPv6禁用: $DISABLE_IPV6
-
-EOF
-
-    # 写入所有优化参数
-    for param in "${!OPTIMAL_VALUES[@]}"; do
-        echo "$param = ${OPTIMAL_VALUES[$param]}" >> "$SYSCTL_CONF"
-    done
-    
-    print_msg "success" "配置文件已生成: $SYSCTL_CONF"
-}
-
-# 应用配置
-apply_configuration() {
-    if [ "$DRY_RUN" = true ]; then
-        show_preview_configuration
-        return 0
-    fi
-    
-    print_msg "working" "根据系统特性验证并应用配置..."
-    
-    # 读取当前系统参数值进行对比
-    read_current_system_values
-    
-    # 分析参数变化
-    analyze_parameter_changes
-    
-    local success_count=0
-    local fail_count=0
-    local failed_params=()
-    
-    # 过滤参数
-    filter_parameters_by_system "$SYSTEM_PROFILE" "$(echo "${!OPTIMAL_VALUES[@]}" | wc -w)"
-    
-    # 逐个应用参数
-    for param in "${!OPTIMAL_VALUES[@]}"; do
-        local value="${OPTIMAL_VALUES[$param]}"
-        
-        if sysctl -w "$param=$value" >/dev/null 2>&1; then
-            ((success_count++))
-        else
-            ((fail_count++))
-            failed_params+=("$param=$value")
-            print_msg "warning" "参数应用失败: $param=$value"
-        fi
-    done
-    
-    print_msg "info" "配置应用结果: $success_count/$((success_count + fail_count)) 个参数成功应用"
-    
-    if [ $fail_count -gt 0 ]; then
-        print_msg "warning" "部分配置参数应用失败($fail_count个)"
-        create_clean_config_file "${failed_params[@]}"
-        print_msg "info" "已创建清理版配置文件: ${SYSCTL_CONF}-clean.conf"
-        print_msg "info" "系统优化仍然有效,只是跳过了不兼容的参数"
-    fi
-    
-    # 显示失败的参数
-    if [ ${#failed_params[@]} -gt 0 ]; then
-        echo
-        print_msg "warning" "失败的参数:"
-        for failed_param in "${failed_params[@]}"; do
-            echo -e "${RED}  • $failed_param${RESET}"
-        done
-    fi
-    
-    print_msg "success" "优化配置应用完成!系统性能已得到提升。"
-    print_msg "info" "建议重启系统以确保所有更改完全生效。"
-    
-    # 显示详细优化报告
-    show_detailed_optimization_report
-    
-    show_optimization_summary $success_count $fail_count
-}
-
-# 创建清理版配置文件
-create_clean_config_file() {
-    local failed_params=("$@")
-    local clean_config="${SYSCTL_CONF}-clean.conf"
-    
-    # 复制原配置文件头部
-    head -n 8 "$SYSCTL_CONF" > "$clean_config"
-    
-    # 添加成功的参数
-    for param in "${!OPTIMAL_VALUES[@]}"; do
-        local param_line="$param = ${OPTIMAL_VALUES[$param]}"
-        local is_failed=false
-        
-        for failed in "${failed_params[@]}"; do
-            if [[ "$param_line" == "$failed" ]]; then
-                is_failed=true
-                break
-            fi
-        done
-        
-        if [ "$is_failed" = false ]; then
-            echo "$param_line" >> "$clean_config"
-        fi
-    done
-}
-
-# 根据系统配置档案过滤参数
-filter_parameters_by_system() {
-    local system_profile="$1"
-    local total_params="$2"
-    
-    print_msg "info" "系统配置: $system_profile"
-    print_msg "info" "系统过滤: $total_params -> $total_params 个参数"
-}
-
-# 显示预览配置
-show_preview_configuration() {
-    # 读取当前系统参数值进行对比
-    read_current_system_values
-    analyze_parameter_changes
-    
+# 显示详细优化报告
+show_detailed_optimization_report() {
     echo
-    print_msg "preview" "配置预览模式 - 以下是将要应用的参数对比："
+    echo -e "${CYAN}${BOLD}📋 详细优化报告：${RESET}"
+    echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
     
-    # 显示详细对比
+    # 显示参数对比表
     show_parameter_comparison
-    show_performance_improvements
-    show_workload_specific_optimizations
     
-    echo
-    print_msg "info" "预览完成，未实际应用任何更改"
-    print_msg "info" "要实际应用这些优化，请重新运行并选择非预览模式"
+    # 显示性能提升分析
+    show_performance_improvements
+    
+    # 显示工作负载特定的优化说明
+    show_workload_specific_optimizations
 }
 
 # 显示优化摘要
@@ -1102,6 +1410,7 @@ show_optimization_summary() {
     echo -e "${WHITE}• 备份文件位置: ${GREEN}$BACKUP_DIR${RESET}"
     echo -e "${WHITE}• 日志文件位置: ${GREEN}$LOG_FILE${RESET}"
     echo -e "${WHITE}• IPv6状态: ${GREEN}$([ "$DISABLE_IPV6" = true ] && echo "已禁用" || echo "保持启用")${RESET}"
+    echo -e "${WHITE}• BBR状态: ${GREEN}$([ "$ENABLE_BBR" = true ] && echo "已启用" || echo "未启用")${RESET}"
     
     # 显示系统特定建议
     show_system_specific_recommendations
@@ -1115,8 +1424,10 @@ show_system_specific_recommendations() {
     case "$SYSTEM_PROFILE" in
         "ubuntu_modern"|"debian_modern"|"fedora_modern")
             echo -e "${GREEN}• ✅ 现代系统，所有优化功能完美支持${RESET}"
-            if echo "$KERNEL_FEATURES" | grep -q "bbr"; then
-                echo -e "${BLUE}• 🔧 可考虑启用BBR拥塞控制算法提升网络性能${RESET}"
+            if [ "$ENABLE_BBR" = true ]; then
+                echo -e "${BLUE}• 🔧 BBR拥塞控制已启用，网络性能将显著提升${RESET}"
+            elif [ "$BBR_SUPPORTED" = true ]; then
+                echo -e "${YELLOW}• 🔧 系统支持BBR，可考虑下次启用以提升网络性能${RESET}"
             fi
             ;;
         "ubuntu_lts"|"debian_stable")
@@ -1144,6 +1455,10 @@ show_system_specific_recommendations() {
     
     echo -e "${PURPLE}• 📊 建议安装htop/iotop等监控工具观察优化效果${RESET}"
     echo -e "${CYAN}• 🔄 可运行 'sysctl -p $SYSCTL_CONF' 重新加载配置${RESET}"
+    
+    if [ "$ENABLE_BBR" = true ]; then
+        echo -e "${GREEN}• 🚀 BBR优化提示: 可使用 'ss -i' 查看连接的拥塞控制算法${RESET}"
+    fi
 }
 
 # ==================== 主流程函数 ====================
@@ -1158,36 +1473,52 @@ handle_quick_optimization() {
             OPTIMIZATION_LEVEL="balanced"
             DISABLE_IPV6=false
             AUTO_ROLLBACK_ENABLED=true
+            # Web服务器建议启用BBR
+            ask_user_bbr_preference
             ;;
         2)
             WORKLOAD_TYPE="database"
             OPTIMIZATION_LEVEL="balanced"
             DISABLE_IPV6=false
             AUTO_ROLLBACK_ENABLED=true
+            # 数据库服务器谨慎启用BBR
+            ask_user_bbr_preference
             ;;
         3)
             WORKLOAD_TYPE="proxy"
             OPTIMIZATION_LEVEL="aggressive"
             DISABLE_IPV6=true  # VPS代理默认禁用IPv6
             AUTO_ROLLBACK_ENABLED=true
+            # 代理服务器强烈建议启用BBR
+            if [ "$BBR_SUPPORTED" = true ]; then
+                ENABLE_BBR=true
+                print_msg "info" "代理服务器已自动启用BBR拥塞控制算法"
+            else
+                ENABLE_BBR=false
+            fi
             ;;
         4)
             WORKLOAD_TYPE="container"
             OPTIMIZATION_LEVEL="balanced"
             DISABLE_IPV6=false
             AUTO_ROLLBACK_ENABLED=true
+            ask_user_bbr_preference
             ;;
         5)
             WORKLOAD_TYPE="general"
             OPTIMIZATION_LEVEL="balanced"
             DISABLE_IPV6=false
             AUTO_ROLLBACK_ENABLED=true
+            ask_user_bbr_preference
             ;;
         *)
             print_msg "error" "无效选择"
             return 1
             ;;
     esac
+    
+    # 配置BBR
+    configure_bbr
     
     # 显示选择确认
     show_quick_optimization_confirmation
@@ -1200,21 +1531,27 @@ show_quick_optimization_confirmation() {
     echo -e "${WHITE}• 工作负载类型: ${GREEN}$WORKLOAD_TYPE${RESET}"
     echo -e "${WHITE}• 优化级别: ${GREEN}$OPTIMIZATION_LEVEL${RESET}"
     echo -e "${WHITE}• IPv6状态: ${GREEN}$([ "$DISABLE_IPV6" = true ] && echo "禁用" || echo "启用")${RESET}"
+    echo -e "${WHITE}• BBR拥塞控制: ${GREEN}$([ "$ENABLE_BBR" = true ] && echo "启用" || echo "禁用")${RESET}"
     echo -e "${WHITE}• 自动回滚: ${GREEN}$([ "$AUTO_ROLLBACK_ENABLED" = true ] && echo "启用" || echo "禁用")${RESET}"
     echo
     
-    print_msg "question" "确认应用以上配置？[Y/n]"
-    read -r confirm
-    
-    case "$confirm" in
-        [Nn]|[Nn][Oo])
-            print_msg "info" "操作已取消"
-            return 1
-            ;;
-        *)
-            execute_optimization
-            ;;
-    esac
+    while true; do
+        print_msg "question" "确认应用以上配置？[Y/n]: "
+        read -r -t 30 confirm || confirm=""
+        case "$confirm" in
+            [Nn]|[Nn][Oo])
+                print_msg "info" "操作已取消"
+                return 1
+                ;;
+            [Yy]|[Yy][Ee][Ss]|"")
+                execute_optimization
+                return 0
+                ;;
+            *)
+                print_msg "warning" "请输入 y/Y 或 n/N，默认为 Y"
+                ;;
+        esac
+    done
 }
 
 # 处理自定义配置
@@ -1234,18 +1571,27 @@ handle_custom_configuration() {
     
     # 选择优化级别
     show_optimization_level_menu
-    print_msg "question" "请选择优化级别 [1-3]:"
-    read -r level_choice
+    while true; do
+        print_msg "question" "请选择优化级别 [1-3]: "
+        read -r -t 30 level_choice || level_choice=""
+        case "$level_choice" in
+            1) OPTIMIZATION_LEVEL="conservative"; break ;;
+            2) OPTIMIZATION_LEVEL="balanced"; break ;;
+            3) OPTIMIZATION_LEVEL="aggressive"; break ;;
+            "") 
+                OPTIMIZATION_LEVEL="balanced"
+                print_msg "info" "使用默认优化级别: balanced"
+                break
+                ;;
+            *) print_msg "warning" "请输入 1-3，默认为 2(平衡优化)" ;;
+        esac
+    done
     
-    case "$level_choice" in
-        1) OPTIMIZATION_LEVEL="conservative" ;;
-        2) OPTIMIZATION_LEVEL="balanced" ;;
-        3) OPTIMIZATION_LEVEL="aggressive" ;;
-        *) print_msg "error" "无效选择"; return 1 ;;
-    esac
-    
-    # 高级选项
+    # 高级选项（包括BBR选择）
     show_advanced_options_menu
+    
+    # 配置BBR
+    configure_bbr
     
     # 显示配置摘要
     show_custom_configuration_summary
@@ -1259,23 +1605,29 @@ show_custom_configuration_summary() {
     echo -e "${WHITE}• 工作负载类型: ${GREEN}$WORKLOAD_TYPE${RESET}"
     echo -e "${WHITE}• 优化级别: ${GREEN}$OPTIMIZATION_LEVEL${RESET}"
     echo -e "${WHITE}• IPv6状态: ${GREEN}$([ "$DISABLE_IPV6" = true ] && echo "禁用" || echo "启用")${RESET}"
+    echo -e "${WHITE}• BBR拥塞控制: ${GREEN}$([ "$ENABLE_BBR" = true ] && echo "启用" || echo "禁用")${RESET}"
     echo -e "${WHITE}• 自动回滚: ${GREEN}$([ "$AUTO_ROLLBACK_ENABLED" = true ] && echo "启用" || echo "禁用")${RESET}"
     echo -e "${WHITE}• 预览模式: ${GREEN}$([ "$DRY_RUN" = true ] && echo "启用" || echo "禁用")${RESET}"
     echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
     echo
     
-    print_msg "question" "确认应用以上配置？[Y/n]"
-    read -r confirm
-    
-    case "$confirm" in
-        [Nn]|[Nn][Oo])
-            print_msg "info" "操作已取消"
-            return 1
-            ;;
-        *)
-            execute_optimization
-            ;;
-    esac
+    while true; do
+        print_msg "question" "确认应用以上配置？[Y/n]: "
+        read -r -t 30 confirm || confirm=""
+        case "$confirm" in
+            [Nn]|[Nn][Oo])
+                print_msg "info" "操作已取消"
+                return 1
+                ;;
+            [Yy]|[Yy][Ee][Ss]|"")
+                execute_optimization
+                return 0
+                ;;
+            *)
+                print_msg "warning" "请输入 y/Y 或 n/N，默认为 Y"
+                ;;
+        esac
+    done
 }
 
 # 执行优化
@@ -1310,129 +1662,10 @@ show_system_info() {
     
     echo
     print_msg "info" "按Enter键返回主菜单..."
-    read -r
+    read -r -t 30 || echo
 }
 
-# 查看当前优化对比
-view_current_optimization_comparison() {
-    clear
-    print_msg "working" "分析当前系统优化状态..."
-    
-    # 检查是否存在优化配置文件
-    if [ ! -f "$SYSCTL_CONF" ]; then
-        print_msg "warning" "未找到优化配置文件，系统可能尚未优化"
-        echo -e "${YELLOW}配置文件位置: $SYSCTL_CONF${RESET}"
-        echo
-        print_msg "info" "请先运行优化后再查看对比效果"
-        print_msg "info" "按Enter键返回主菜单..."
-        read -r
-        return
-    fi
-    
-    print_msg "info" "正在读取已应用的优化配置..."
-    
-    # 从配置文件读取已优化的参数
-    declare -A applied_params=()
-    while IFS='=' read -r key value; do
-        # 跳过注释和空行
-        [[ "$key" =~ ^[[:space:]]*# ]] && continue
-        [[ -z "$key" ]] && continue
-        
-        # 清理键值
-        key=$(echo "$key" | xargs)
-        value=$(echo "$value" | xargs)
-        
-        if [ -n "$key" ] && [ -n "$value" ]; then
-            applied_params["$key"]="$value"
-        fi
-    done < "$SYSCTL_CONF"
-    
-    if [ ${#applied_params[@]} -eq 0 ]; then
-        print_msg "error" "配置文件中未找到有效的优化参数"
-        print_msg "info" "按Enter键返回主菜单..."
-        read -r
-        return
-    fi
-    
-    # 设置OPTIMAL_VALUES为已应用的参数，以便使用现有的对比功能
-    OPTIMAL_VALUES=()
-    for param in "${!applied_params[@]}"; do
-        OPTIMAL_VALUES["$param"]="${applied_params[$param]}"
-    done
-    
-    # 读取当前系统值并分析
-    read_current_system_values
-    analyze_parameter_changes
-    
-    # 显示对比结果
-    echo
-    echo -e "${CYAN}${BOLD}📊 当前系统优化状态对比：${RESET}"
-    echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-    echo -e "${WHITE}• 配置文件: ${GREEN}$SYSCTL_CONF${RESET}"
-    echo -e "${WHITE}• 优化参数总数: ${GREEN}${#OPTIMAL_VALUES[@]}${RESET}"
-    echo -e "${WHITE}• 检测时间: ${GREEN}$(date '+%Y-%m-%d %H:%M:%S')${RESET}"
-    echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-    
-    # 显示详细对比
-    show_parameter_comparison
-    show_performance_improvements
-    
-    # 显示应用状态统计
-    show_optimization_status_summary
-    
-    print_msg "info" "按Enter键返回主菜单..."
-    read -r
-}
-
-# 显示优化状态摘要
-show_optimization_status_summary() {
-    local active_count=0
-    local inactive_count=0
-    local modified_count=0
-    
-    # 统计参数状态
-    for param in "${!OPTIMAL_VALUES[@]}"; do
-        local current_value=$(sysctl -n "$param" 2>/dev/null || echo "")
-        local expected_value="${OPTIMAL_VALUES[$param]}"
-        
-        if [ "$current_value" = "$expected_value" ]; then
-            ((active_count++))
-        else
-            ((inactive_count++))
-            if [ -n "$current_value" ] && [ "$current_value" != "${ORIGINAL_VALUES[$param]:-}" ]; then
-                ((modified_count++))
-            fi
-        fi
-    done
-    
-    echo
-    echo -e "${CYAN}${BOLD}📈 优化状态统计：${RESET}"
-    echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-    echo -e "${GREEN}✅ 正常应用的参数: ${BOLD}${active_count}${RESET}${GREEN} 个${RESET}"
-    
-    if [ $inactive_count -gt 0 ]; then
-        echo -e "${YELLOW}⚠️  状态异常的参数: ${BOLD}${inactive_count}${RESET}${YELLOW} 个${RESET}"
-        echo -e "${BLUE}ℹ️  建议运行 'sysctl -p $SYSCTL_CONF' 重新加载配置${RESET}"
-    fi
-    
-    if [ $modified_count -gt 0 ]; then
-        echo -e "${PURPLE}🔄 被其他程序修改的参数: ${BOLD}${modified_count}${RESET}${PURPLE} 个${RESET}"
-    fi
-    
-    # 显示优化效果评估
-    local effectiveness=$((active_count * 100 / ${#OPTIMAL_VALUES[@]}))
-    echo -e "${CYAN}📊 优化生效率: ${BOLD}${effectiveness}%${RESET}"
-    
-    if [ $effectiveness -ge 90 ]; then
-        echo -e "${GREEN}🎉 优化效果: 优秀 - 系统性能已得到全面提升${RESET}"
-    elif [ $effectiveness -ge 70 ]; then
-        echo -e "${YELLOW}👍 优化效果: 良好 - 大部分优化已生效${RESET}"
-    else
-        echo -e "${RED}⚠️  优化效果: 需要注意 - 建议检查系统配置${RESET}"
-    fi
-    
-    echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-}
+# 恢复默认配置
 restore_default_config() {
     print_msg "working" "准备恢复默认配置..."
     
@@ -1453,23 +1686,29 @@ restore_default_config() {
     local latest_backup="${backup_files[0]}"
     print_msg "info" "最新备份: $(basename "$latest_backup")"
     
-    print_msg "question" "确认恢复到最新备份？[y/N]"
-    read -r confirm
-    
-    case "$confirm" in
-        [Yy]|[Yy][Ee][Ss])
-            if [ -f "$SYSCTL_CONF" ]; then
-                rm -f "$SYSCTL_CONF"
-                print_msg "success" "已删除优化配置文件"
-            fi
-            
-            sysctl -p >/dev/null 2>&1 || true
-            print_msg "success" "配置已恢复，建议重启系统以确保完全生效"
-            ;;
-        *)
-            print_msg "info" "操作已取消"
-            ;;
-    esac
+    while true; do
+        print_msg "question" "确认恢复到最新备份？[y/N]: "
+        read -r -t 30 confirm || confirm=""
+        case "$confirm" in
+            [Yy]|[Yy][Ee][Ss])
+                if [ -f "$SYSCTL_CONF" ]; then
+                    rm -f "$SYSCTL_CONF"
+                    print_msg "success" "已删除优化配置文件"
+                fi
+                
+                sysctl -p >/dev/null 2>&1 || true
+                print_msg "success" "配置已恢复，建议重启系统以确保完全生效"
+                return 0
+                ;;
+            [Nn]|[Nn][Oo]|"")
+                print_msg "info" "操作已取消"
+                return 1
+                ;;
+            *)
+                print_msg "warning" "请输入 y/Y 或 n/N，默认为 N"
+                ;;
+        esac
+    done
 }
 
 # 命令行参数处理
@@ -1479,6 +1718,8 @@ handle_command_line_args() {
             WORKLOAD_TYPE="web"
             OPTIMIZATION_LEVEL="balanced"
             AUTO_ROLLBACK_ENABLED=true
+            ask_user_bbr_preference
+            configure_bbr
             execute_optimization
             exit 0
             ;;
@@ -1486,6 +1727,8 @@ handle_command_line_args() {
             WORKLOAD_TYPE="database"
             OPTIMIZATION_LEVEL="balanced"
             AUTO_ROLLBACK_ENABLED=true
+            ask_user_bbr_preference
+            configure_bbr
             execute_optimization
             exit 0
             ;;
@@ -1494,6 +1737,10 @@ handle_command_line_args() {
             OPTIMIZATION_LEVEL="aggressive"
             DISABLE_IPV6=true
             AUTO_ROLLBACK_ENABLED=true
+            if [ "$BBR_SUPPORTED" = true ]; then
+                ENABLE_BBR=true
+            fi
+            configure_bbr
             execute_optimization
             exit 0
             ;;
@@ -1501,6 +1748,8 @@ handle_command_line_args() {
             WORKLOAD_TYPE="container"
             OPTIMIZATION_LEVEL="balanced"
             AUTO_ROLLBACK_ENABLED=true
+            ask_user_bbr_preference
+            configure_bbr
             execute_optimization
             exit 0
             ;;
@@ -1531,13 +1780,26 @@ show_help() {
     echo -e "${WHITE}快速优化选项:${RESET}"
     echo -e "  --web                 Web服务器优化"
     echo -e "  --database            数据库服务器优化"
-    echo -e "  --proxy               VPS代理服务器优化"
+    echo -e "  --proxy               VPS代理服务器优化（自动启用BBR）"
     echo -e "  --container           容器主机优化"
     echo
     echo -e "${WHITE}其他选项:${RESET}"
     echo -e "  --preview             预览模式（不实际应用）"
     echo -e "  --help, -h            显示此帮助信息"
     echo -e "  --version, -v         显示版本信息"
+    echo
+    echo -e "${WHITE}新增功能:${RESET}"
+    echo -e "  - 自动检测BBR支持并询问用户是否启用"
+    echo -e "  - 修复参数值比较逻辑（处理空格差异）"
+    echo -e "  - 移除查看优化对比功能"
+    echo -e "  - 改进参数显示和分析"
+    echo
+    echo -e "${WHITE}修复内容:${RESET}"
+    echo -e "  - 修复数值比较逻辑错误"
+    echo -e "  - 修复倍数计算错误"
+    echo -e "  - 添加依赖检查和错误处理"
+    echo -e "  - 修复脚本卡住问题"
+    echo -e "  - 改进用户体验"
     echo
 }
 
@@ -1556,22 +1818,22 @@ main() {
     # 主循环
     while true; do
         show_main_menu
-        print_msg "question" "请选择操作 [0-5]:"
-        read -r main_choice
+        print_msg "question" "请选择操作 [0-4]: "
+        read -r -t 30 main_choice || main_choice=""
         
         case "$main_choice" in
             1)
                 while true; do
                     show_quick_optimization_menu
-                    print_msg "question" "请选择服务器类型 [0-5]:"
-                    read -r quick_choice
+                    print_msg "question" "请选择服务器类型 [0-5]: "
+                    read -r -t 30 quick_choice || quick_choice=""
                     
                     case "$quick_choice" in
-                        0) break ;;
+                        0|"") break ;;
                         [1-5])
                             if handle_quick_optimization "$quick_choice"; then
                                 print_msg "info" "按Enter键继续..."
-                                read -r
+                                read -r -t 30 || echo
                             fi
                             break
                             ;;
@@ -1584,15 +1846,15 @@ main() {
                 ;;
             2)
                 show_custom_configuration_menu
-                print_msg "question" "请选择工作负载类型 [0-6]:"
-                read -r custom_choice
+                print_msg "question" "请选择工作负载类型 [0-6]: "
+                read -r -t 30 custom_choice || custom_choice=""
                 
                 case "$custom_choice" in
-                    0) continue ;;
+                    0|"") continue ;;
                     [1-6])
                         if handle_custom_configuration "$custom_choice"; then
                             print_msg "info" "按Enter键继续..."
-                            read -r
+                            read -r -t 30 || echo
                         fi
                         ;;
                     *)
@@ -1605,16 +1867,17 @@ main() {
                 show_system_info
                 ;;
             4)
-                view_current_optimization_comparison
-                ;;
-            5)
                 restore_default_config
                 print_msg "info" "按Enter键继续..."
-                read -r
+                read -r -t 30 || echo
                 ;;
             0)
                 print_msg "success" "感谢使用Linux内核优化脚本！"
                 exit 0
+                ;;
+            "")
+                print_msg "info" "未输入选择，请重新选择"
+                sleep 1
                 ;;
             *)
                 print_msg "error" "无效选择，请重新输入"
