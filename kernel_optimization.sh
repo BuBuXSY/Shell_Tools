@@ -1,7 +1,7 @@
 #!/bin/bash
 # Linux 内核优化脚本 v2.0
 # By: BuBuXSY
-# Version: 2.0-
+# Version: 2.0
 # 2025-07-25
 # License: MIT
 # 特性: 智能系统检测 + 分层菜单设计 + IPv6可选禁用 + 错误处理优化
