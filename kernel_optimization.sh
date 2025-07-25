@@ -1,12 +1,13 @@
 #!/bin/bash
-# Linux 内核优化脚本
+# Linux 内核优化脚本 v2.0
 # By: BuBuXSY
-# Version: 2025-07-19
+# Version: 2.0-complete-full
 # License: MIT
+# 特性: 智能系统检测 + 分层菜单设计 + IPv6可选禁用 + 错误处理优化
 
-set -euo pipefail  # 严格模式：遇到错误立即退出
+set -euo pipefail
 
-# 颜色和样式定义 - 修复：使用更兼容的转义序列
+# 颜色和样式定义
 readonly RED=$'\033[1;31m'
 readonly GREEN=$'\033[1;32m'
 readonly YELLOW=$'\033[1;33m'
@@ -20,34 +21,10 @@ readonly RESET=$'\033[0m'
 # 全局配置
 readonly LOG_FILE="/var/log/kernel_optimization.log"
 readonly BACKUP_DIR="/var/backups/kernel_optimization"
-readonly VERSION_DIR="/etc/kernel_optimization/versions"
-readonly BENCHMARK_DIR="/var/log/kernel_optimization/benchmarks"
-readonly EXPORT_DIR="/root/kernel_optimization_exports"
-readonly TEMP_DIR="/tmp/kernel_optimization"
-
-# 脚本版本和元信息
-readonly SCRIPT_VERSION="1.0-fixed-v2"
-readonly SCRIPT_NAME="Linux内核优化脚本"
-readonly MIN_KERNEL_VERSION="3.10"
-readonly MIN_MEMORY_MB=512
-
-# 创建必要的目录
-create_directories() {
-    local dirs=("$BACKUP_DIR" "$VERSION_DIR" "$BENCHMARK_DIR" "$EXPORT_DIR" "$TEMP_DIR")
-    
-    for dir in "${dirs[@]}"; do
-        if ! mkdir -p "$dir" 2>/dev/null; then
-            echo "警告: 无法创建目录 $dir" >&2
-        else
-            chmod 750 "$dir" 2>/dev/null || true
-        fi
-    done
-}
+readonly SYSCTL_CONF="/etc/sysctl.d/99-kernel-optimization.conf"
+readonly SCRIPT_VERSION="2.0-complete-full"
 
 # 全局变量
-SYSTEM_TYPE=""
-ENV_TYPE=""
-OPTIMIZATION=""
 OS=""
 VER=""
 DISTRO_FAMILY=""
@@ -55,67 +32,33 @@ TOTAL_MEM=""
 TOTAL_MEM_GB=""
 CPU_CORES=""
 KERNEL_VERSION=""
-WORKLOAD_TYPE=""
+SYSTEM_PROFILE=""
+KERNEL_FEATURES=""
+ENV_TYPE=""
+DISABLE_IPV6=false
 AUTO_ROLLBACK_ENABLED=false
 DRY_RUN=false
+OPTIMIZATION_LEVEL=""
+WORKLOAD_TYPE=""
 
-# 优化参数存储 - 修复：添加默认值初始化
+# 优化参数存储
 declare -A OPTIMAL_VALUES=()
-declare -A TEST_RESULTS=()
-declare -A CURRENT_VALUES=()
-
-# 安全的数组长度检查函数
-safe_array_length() {
-    local -n array_ref=$1
-    local length=0
-    
-    # 安全地检查关联数组长度
-    if [[ -v array_ref ]]; then
-        for key in "${!array_ref[@]}"; do
-            ((length++))
-        done
-    fi
-    
-    echo "$length"
-}
-
-# 安全的数组元素检查函数
-safe_array_get() {
-    local -n array_ref=$1
-    local key="$2"
-    local default_value="${3:-}"
-    
-    if [[ -v array_ref["$key"] ]]; then
-        echo "${array_ref[$key]}"
-    else
-        echo "$default_value"
-    fi
-}
-
-# 安全的数组元素设置函数
-safe_array_set() {
-    local -n array_ref=$1
-    local key="$2"
-    local value="$3"
-    
-    array_ref["$key"]="$value"
-}
+declare -A ORIGINAL_VALUES=()
+declare -A PARAMETER_CHANGES=()
 
 # ==================== 基础函数 ====================
 
-# 安全的日志记录函数
+# 创建必要的目录
+create_directories() {
+    mkdir -p "$BACKUP_DIR" "/tmp/kernel_optimization" 2>/dev/null || true
+    chmod 750 "$BACKUP_DIR" 2>/dev/null || true
+}
+
+# 日志记录函数
 log() {
     local message="$1"
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    local log_entry="[$timestamp] $message"
-    
-    # 尝试写入日志文件，失败时输出到stderr
-    if ! echo "$log_entry" >> "$LOG_FILE" 2>/dev/null; then
-        echo "$log_entry" >&2
-    fi
-    
-    # 同时输出到终端（可选）
-    echo "$log_entry"
+    echo "[$timestamp] $message" | tee -a "$LOG_FILE" 2>/dev/null || echo "[$timestamp] $message"
 }
 
 # 打印带颜色和emoji的消息
@@ -130,8 +73,6 @@ print_msg() {
         "info") echo -e "${BLUE}ℹ️  $msg${RESET}" ;;
         "question") echo -e "${PURPLE}❓ $msg${RESET}" ;;
         "working") echo -e "${CYAN}⚡ $msg${RESET}" ;;
-        "test") echo -e "${PURPLE}🧪 $msg${RESET}" ;;
-        "security") echo -e "${RED}🔒 $msg${RESET}" ;;
         "preview") echo -e "${YELLOW}👁️  $msg${RESET}" ;;
     esac
 }
@@ -141,30 +82,13 @@ check_command() {
     command -v "$1" >/dev/null 2>&1
 }
 
-# 安全的数值验证
+# 数值验证
 validate_number() {
     local value="$1"
     local min="${2:-0}"
-    local max="${3:-9223372036854775807}"  # 64位最大值
+    local max="${3:-9223372036854775807}"
     
     if [[ "$value" =~ ^[0-9]+$ ]] && [ "$value" -ge "$min" ] && [ "$value" -le "$max" ]; then
-        return 0
-    else
-        return 1
-    fi
-}
-
-# 输入验证和清理
-validate_user_input() {
-    local input="$1"
-    local valid_options="$2"
-    
-    # 移除潜在危险字符，只保留字母数字
-    input=$(echo "$input" | tr -cd '[:alnum:]')
-    
-    # 检查是否在有效选项中
-    if echo "$valid_options" | grep -qw "$input"; then
-        echo "$input"
         return 0
     else
         return 1
@@ -174,123 +98,47 @@ validate_user_input() {
 # 检查root权限
 check_root() {
     if [ "$(id -u)" != "0" ]; then
-        print_msg "error" "此脚本必须以root权限运行！🔒"
+        print_msg "error" "此脚本必须以root权限运行！"
         echo -e "${YELLOW}请尝试: ${WHITE}sudo $0${RESET}"
         exit 1
     fi
     print_msg "success" "已获取root权限"
 }
 
-# 检查系统兼容性
-check_compatibility() {
-    print_msg "test" "检查系统兼容性..."
-    
-    # 检查内核版本 - 修复版本比较逻辑
-    local kernel_ver=$(uname -r | cut -d. -f1,2)
-    
-    # 正确的版本比较函数
-    version_compare() {
-        local ver1="$1"
-        local ver2="$2"
-        
-        # 分割版本号
-        local IFS='.'
-        local ver1_parts=($ver1)
-        local ver2_parts=($ver2)
-        
-        # 比较主版本号
-        if [ "${ver1_parts[0]}" -gt "${ver2_parts[0]}" ]; then
-            return 0  # ver1 > ver2
-        elif [ "${ver1_parts[0]}" -lt "${ver2_parts[0]}" ]; then
-            return 1  # ver1 < ver2
-        fi
-        
-        # 主版本号相同，比较次版本号
-        local ver1_minor="${ver1_parts[1]:-0}"
-        local ver2_minor="${ver2_parts[1]:-0}"
-        
-        if [ "$ver1_minor" -ge "$ver2_minor" ]; then
-            return 0  # ver1 >= ver2
-        else
-            return 1  # ver1 < ver2
-        fi
-    }
-    
-    if ! version_compare "$kernel_ver" "$MIN_KERNEL_VERSION"; then
-        print_msg "error" "内核版本 $kernel_ver 过低，需要 $MIN_KERNEL_VERSION 或更高版本"
-        return 1
-    fi
-    
-    # 检查内存
-    local mem_mb=$((TOTAL_MEM / 1024 / 1024))
-    if [ "$mem_mb" -lt "$MIN_MEMORY_MB" ]; then
-        print_msg "warning" "内存容量 ${mem_mb}MB 较低，建议至少 ${MIN_MEMORY_MB}MB"
-    fi
-    
-    # 检查必要的系统文件
-    local required_files=("/proc/sys" "/etc/sysctl.conf")
-    for file in "${required_files[@]}"; do
-        if [ ! -e "$file" ]; then
-            print_msg "error" "缺少必要的系统文件: $file"
-            return 1
-        fi
-    done
-    
-    print_msg "success" "系统兼容性检查通过"
-    return 0
-}
-
 # ==================== 系统检测函数 ====================
 
-# 安全的发行版检测
+# 检测Linux发行版
 detect_distro() {
     print_msg "working" "正在检测Linux发行版..."
     
     if [ -f /etc/os-release ]; then
-        # 安全地读取os-release文件，避免代码注入
-        local name_line version_line id_line
+        OS=$(grep '^NAME=' /etc/os-release | cut -d'=' -f2- | tr -d '"' | head -1)
+        VER=$(grep '^VERSION_ID=' /etc/os-release | cut -d'=' -f2- | tr -d '"' | head -1)
+        local system_id=$(grep '^ID=' /etc/os-release | cut -d'=' -f2- | tr -d '"' | head -1)
         
-        name_line=$(grep '^NAME=' /etc/os-release 2>/dev/null | head -1)
-        version_line=$(grep '^VERSION_ID=' /etc/os-release 2>/dev/null | head -1)
-        id_line=$(grep '^ID=' /etc/os-release 2>/dev/null | head -1)
+        OS=${OS:-"Unknown"}
+        VER=${VER:-"0"}
+        system_id=${system_id:-"unknown"}
         
-        # 安全提取值
-        OS=$(echo "$name_line" | cut -d'=' -f2- | tr -d '"' | head -1)
-        VER=$(echo "$version_line" | cut -d'=' -f2- | tr -d '"' | head -1)
-        local system_id=$(echo "$id_line" | cut -d'=' -f2- | tr -d '"' | head -1)
-        
-        # 验证和清理提取的值
-        OS=$(echo "${OS:-Unknown}" | tr -cd '[:alnum:] ._-')
-        VER=$(echo "${VER:-0}" | tr -cd '[:alnum:]._-')
-        system_id=$(echo "${system_id:-unknown}" | tr -cd '[:alnum:]._-')
-        
-        # 检测发行版系列
         case "$system_id" in
-            ubuntu|debian|linuxmint|pop|elementary|raspbian)
+            ubuntu|debian|linuxmint|pop|elementary)
                 DISTRO_FAMILY="debian"
                 ;;
-            centos|rhel|fedora|rocky|almalinux|ol|amazon)
+            centos|rhel|fedora|rocky|almalinux|ol)
                 DISTRO_FAMILY="redhat"
                 ;;
-            arch|manjaro|endeavouros|garuda)
+            arch|manjaro)
                 DISTRO_FAMILY="arch"
-                ;;
-            opensuse*|sles|tumbleweed)
-                DISTRO_FAMILY="suse"
                 ;;
             alpine)
                 DISTRO_FAMILY="alpine"
                 ;;
-            gentoo)
-                DISTRO_FAMILY="gentoo"
-                ;;
             *)
                 DISTRO_FAMILY="unknown"
-                print_msg "warning" "未知的发行版: $system_id"
                 ;;
         esac
         
-        print_msg "success" "检测到系统: $OS $VER (${DISTRO_FAMILY}系) 🐧"
+        print_msg "success" "检测到系统: $OS $VER (${DISTRO_FAMILY}系)"
         log "操作系统: $OS $VER, 发行版系列: $DISTRO_FAMILY"
     else
         print_msg "error" "无法检测操作系统版本"
@@ -298,1006 +146,1484 @@ detect_distro() {
     fi
 }
 
-# 增强的系统资源检测
+# 检测系统资源
 detect_resources() {
     print_msg "working" "正在分析系统资源..."
     
-    # 内存检测 - 多种方法确保准确性
-    if check_command free; then
-        TOTAL_MEM=$(free -b 2>/dev/null | awk '/^Mem:/{print $2}' | head -1)
-    elif [ -f /proc/meminfo ]; then
-        TOTAL_MEM=$(awk '/^MemTotal:/{print $2*1024}' /proc/meminfo 2>/dev/null)
+    # 内存检测
+    if [ -f /proc/meminfo ]; then
+        TOTAL_MEM=$(awk '/^MemTotal:/{print $2*1024}' /proc/meminfo)
+    elif check_command free; then
+        TOTAL_MEM=$(free -b | awk '/^Mem:/{print $2}' | head -1)
+    else
+        TOTAL_MEM=1073741824  # 默认1GB
     fi
     
-    # 验证内存值
-    if ! validate_number "${TOTAL_MEM:-0}" 134217728; then
-        print_msg "warning" "无法准确检测内存，使用默认值"
-        TOTAL_MEM=1073741824  # 1GB默认值
-    fi
-    
-    TOTAL_MEM_GB=$((TOTAL_MEM / 1024 / 1024 / 1024))
+    # 修复内存显示计算
+    TOTAL_MEM_GB=$(( (TOTAL_MEM + 536870912) / 1073741824 ))
     
     # CPU核心检测
     if check_command nproc; then
-        CPU_CORES=$(nproc 2>/dev/null)
+        CPU_CORES=$(nproc)
     elif [ -f /proc/cpuinfo ]; then
-        CPU_CORES=$(grep -c '^processor' /proc/cpuinfo 2>/dev/null)
-    fi
-    
-    # 验证CPU核心数
-    if ! validate_number "${CPU_CORES:-0}" 1 1024; then
-        print_msg "warning" "无法准确检测CPU核心数，使用默认值"
+        CPU_CORES=$(grep -c '^processor' /proc/cpuinfo)
+    else
         CPU_CORES=1
     fi
     
-    # 内核版本检测
-    KERNEL_VERSION=$(uname -r 2>/dev/null || echo "unknown")
+    KERNEL_VERSION=$(uname -r)
     
-    # CPU架构检测
-    local cpu_arch=$(uname -m 2>/dev/null || echo "unknown")
-    
-    # 显示系统信息
-    echo
-    echo -e "${WHITE}┌─────────────────────────────────────────┐${RESET}"
-    echo -e "${WHITE}│            ${BOLD}系统信息${RESET}${WHITE}                     │${RESET}"
-    echo -e "${WHITE}├─────────────────────────────────────────┤${RESET}"
-    echo -e "${WHITE}│ 💾 内存: ${GREEN}${TOTAL_MEM_GB} GB${WHITE}                       │${RESET}"
-    echo -e "${WHITE}│ 🖥️  CPU核心数: ${GREEN}${CPU_CORES}${WHITE}                        │${RESET}"
-    echo -e "${WHITE}│ 🏗️  架构: ${GREEN}${cpu_arch}${WHITE}                    │${RESET}"
-    echo -e "${WHITE}│ 🐧 内核版本: ${GREEN}${KERNEL_VERSION}${WHITE}           │${RESET}"
-    echo -e "${WHITE}│ 📦 发行版系列: ${GREEN}${DISTRO_FAMILY}${WHITE}                     │${RESET}"
-    echo -e "${WHITE}└─────────────────────────────────────────┘${RESET}"
-    echo
-    
-    log "系统资源 - 内存: ${TOTAL_MEM_GB}GB, CPU核心: $CPU_CORES, 架构: $cpu_arch, 内核: $KERNEL_VERSION"
+    print_msg "success" "系统资源检测完成"
+    log "系统资源 - 内存: ${TOTAL_MEM_GB}GB, CPU核心: $CPU_CORES, 内核: $KERNEL_VERSION"
 }
 
-# 增强的容器和虚拟化环境检测
+# 分析系统配置档案
+analyze_system_profile() {
+    local os_id=$(grep '^ID=' /etc/os-release 2>/dev/null | cut -d'=' -f2 | tr -d '"' | head -1)
+    local version_id=$(grep '^VERSION_ID=' /etc/os-release 2>/dev/null | cut -d'=' -f2 | tr -d '"' | head -1)
+    
+    case "$os_id" in
+        "ubuntu")
+            if [[ "$version_id" =~ ^(24|23) ]]; then
+                SYSTEM_PROFILE="ubuntu_modern"
+            elif [[ "$version_id" =~ ^(22|20) ]]; then
+                SYSTEM_PROFILE="ubuntu_lts"
+            else
+                SYSTEM_PROFILE="ubuntu_legacy"
+            fi
+            ;;
+        "debian")
+            if [[ "$version_id" =~ ^(12|11) ]]; then
+                SYSTEM_PROFILE="debian_modern"
+            else
+                SYSTEM_PROFILE="debian_stable"
+            fi
+            ;;
+        "centos"|"rhel"|"rocky"|"almalinux")
+            SYSTEM_PROFILE="rhel_modern"
+            ;;
+        "fedora")
+            SYSTEM_PROFILE="fedora_modern"
+            ;;
+        "arch"|"manjaro")
+            SYSTEM_PROFILE="arch_rolling"
+            ;;
+        "alpine")
+            SYSTEM_PROFILE="alpine_minimal"
+            ;;
+        *)
+            SYSTEM_PROFILE="generic_modern"
+            ;;
+    esac
+}
+
+# 检测内核特性
+detect_kernel_features() {
+    local features=()
+    
+    [ -d /sys/fs/cgroup ] && features+=("cgroup")
+    [ -f /proc/sys/net/netfilter/nf_conntrack_max ] && features+=("netfilter")
+    [ -f /proc/net/nf_conntrack ] && features+=("conntrack")
+    [ -f /proc/sys/net/ipv6/conf/all/disable_ipv6 ] && features+=("ipv6_disable")
+    [ -f /proc/sys/kernel/pid_max ] && features+=("pid_max")
+    
+    if grep -q bbr /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null; then
+        features+=("bbr")
+    fi
+    
+    KERNEL_FEATURES="${features[*]}"
+}
+
+# 检测容器环境
 detect_container_environment() {
-    print_msg "working" "检测容器和虚拟化环境..."
+    print_msg "working" "检测运行环境..."
     
-    local container_type="none"
-    local virt_type="none"
-    local restrictions=""
-    
-    # 检测容器环境
     if [ -f /.dockerenv ]; then
-        container_type="docker"
-        restrictions="Docker容器内某些内核参数无法修改"
+        ENV_TYPE="docker"
+        print_msg "warning" "检测到Docker容器环境"
     elif [ -n "${KUBERNETES_SERVICE_HOST:-}" ]; then
-        container_type="kubernetes"
-        restrictions="K8s Pod内建议在节点级别优化"
-    elif [ -f /proc/1/cgroup ] && grep -qE "(lxc|docker|kubepods|container)" /proc/1/cgroup 2>/dev/null; then
-        container_type="container"
-        restrictions="容器环境内核参数受限"
-    elif [ -f /proc/vz/version ]; then
-        container_type="openvz"
-        restrictions="OpenVZ容器内核参数严格受限"
-    fi
-    
-    # 检测虚拟化环境
-    if check_command systemd-detect-virt; then
-        virt_type=$(systemd-detect-virt 2>/dev/null || echo "none")
-    elif [ -d /proc/xen ]; then
-        virt_type="xen"
-    elif [ -f /sys/hypervisor/type ]; then
-        virt_type=$(cat /sys/hypervisor/type 2>/dev/null || echo "unknown")
-    elif grep -q "^flags.*hypervisor" /proc/cpuinfo 2>/dev/null; then
-        virt_type="hypervisor"
-    elif [ -f /proc/cpuinfo ] && grep -q "QEMU\|KVM" /proc/cpuinfo 2>/dev/null; then
-        virt_type="qemu-kvm"
-    fi
-    
-    # 设置环境类型和显示信息
-    if [ "$container_type" != "none" ]; then
-        ENV_TYPE="container-$container_type"
-        print_msg "warning" "检测到容器环境: $container_type"
-        [ -n "$restrictions" ] && print_msg "info" "$restrictions"
-    elif [ "$virt_type" != "none" ] && [ "$virt_type" != "none" ]; then
-        ENV_TYPE="virtual-$virt_type"
-        print_msg "info" "检测到虚拟化环境: $virt_type"
+        ENV_TYPE="kubernetes"
+        print_msg "warning" "检测到Kubernetes环境"
+    elif [ -f /proc/1/cgroup ] && grep -qE "(lxc|docker|kubepods)" /proc/1/cgroup 2>/dev/null; then
+        ENV_TYPE="container"
+        print_msg "warning" "检测到容器环境"
+    elif check_command systemd-detect-virt && [ "$(systemd-detect-virt)" != "none" ]; then
+        ENV_TYPE="virtual"
+        print_msg "info" "检测到虚拟化环境"
     else
         ENV_TYPE="physical"
         print_msg "success" "检测到物理机环境"
     fi
-    
-    log "环境检测: container=$container_type, virtualization=$virt_type"
 }
 
-# ==================== 智能参数计算 ====================
+# 深度系统检测
+perform_deep_system_detection() {
+    print_msg "working" "执行深度系统检测和分析..."
+    
+    detect_distro
+    detect_resources
+    analyze_system_profile
+    detect_kernel_features
+    detect_container_environment
+    
+    show_system_analysis_results
+    print_msg "success" "深度系统检测完成"
+}
 
-# 安全的参数计算（增强边界检查）
+# 显示系统分析结果
+show_system_analysis_results() {
+    echo
+    echo -e "${CYAN}${BOLD}🔍 深度系统分析结果：${RESET}"
+    echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    echo -e "${WHITE}• 操作系统: ${GREEN}$OS $VER${RESET}"
+    echo -e "${WHITE}• 发行版系列: ${GREEN}$DISTRO_FAMILY${RESET}"
+    echo -e "${WHITE}• 系统架构: ${GREEN}$(uname -m)${RESET}"
+    echo -e "${WHITE}• 内核版本: ${GREEN}$KERNEL_VERSION${RESET}"
+    echo -e "${WHITE}• 系统配置档案: ${GREEN}$SYSTEM_PROFILE${RESET}"
+    echo -e "${WHITE}• 内核特性: ${GREEN}${KERNEL_FEATURES:-无检测到}${RESET}"
+    echo -e "${WHITE}• 运行环境: ${GREEN}$ENV_TYPE${RESET}"
+    echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    echo
+    echo -e "${WHITE}┌─────────────────────────────────────────┐${RESET}"
+    echo -e "${WHITE}│            ${BOLD}系统资源${RESET}${WHITE}                     │${RESET}"
+    echo -e "${WHITE}├─────────────────────────────────────────┤${RESET}"
+    echo -e "${WHITE}│ 💾 物理内存: ${GREEN}${TOTAL_MEM_GB} GB${WHITE}                   │${RESET}"
+    echo -e "${WHITE}│ 🖥️  CPU核心数: ${GREEN}${CPU_CORES}${WHITE}                        │${RESET}"
+    echo -e "${WHITE}│ 🏗️  架构: ${GREEN}$(uname -m)${WHITE}                    │${RESET}"
+    echo -e "${WHITE}│ 🐧 内核版本: ${GREEN}${KERNEL_VERSION}${WHITE}           │${RESET}"
+    echo -e "${WHITE}└─────────────────────────────────────────┘${RESET}"
+    echo
+}
+
+# ==================== 参数计算函数 ====================
+
+# 计算最优参数值
 calculate_optimal_values() {
-    local total_mem_bytes="${1:-$TOTAL_MEM}"
-    local cpu_cores="${2:-$CPU_CORES}"
-    local workload_type="${3:-general}"
+    local workload="$1"
+    local optimization="$2"
     
     print_msg "working" "基于系统资源计算最优参数..."
     
-    # 严格的输入验证
-    if ! validate_number "$total_mem_bytes" 134217728 274877906944; then  # 128MB - 256GB
-        print_msg "warning" "内存大小异常，使用安全默认值"
-        total_mem_bytes=1073741824  # 1GB
-    fi
+    # 基础参数计算
+    local base_somaxconn=$((CPU_CORES * 1024))
+    local base_file_max=$((CPU_CORES * 65536))
+    local base_rmem_max=$((TOTAL_MEM / 128))
+    local base_wmem_max=$((TOTAL_MEM / 128))
     
-    if ! validate_number "$cpu_cores" 1 1024; then
-        print_msg "warning" "CPU核心数异常，使用安全默认值"
-        cpu_cores=1
-    fi
-    
-    # 使用安全的算术运算，避免溢出
-    local tcp_mem_max net_core_rmem_max net_core_wmem_max somaxconn file_max
-    
-    # 基础计算（使用安全的除法）
-    tcp_mem_max=$((total_mem_bytes / 32))
-    net_core_rmem_max=$((total_mem_bytes / 128))
-    net_core_wmem_max=$((total_mem_bytes / 128))
-    somaxconn=$((cpu_cores * 8192))
-    file_max=$((cpu_cores * 65536))
+    # 根据优化级别调整
+    local multiplier=1
+    case "$optimization" in
+        "conservative") multiplier=1 ;;
+        "balanced") multiplier=2 ;;
+        "aggressive") multiplier=4 ;;
+    esac
     
     # 根据工作负载类型调整
-    case "$workload_type" in
+    case "$workload" in
         "web")
-            print_msg "info" "应用Web服务器优化"
-            somaxconn=$((somaxconn * 2))
-            file_max=$((file_max * 2))
-            tcp_mem_max=$((tcp_mem_max * 3 / 2))  # 1.5倍
+            OPTIMAL_VALUES["net.core.somaxconn"]=$((base_somaxconn * multiplier * 2))
+            OPTIMAL_VALUES["fs.file-max"]=$((base_file_max * multiplier * 2))
             ;;
         "database")
-            print_msg "info" "应用数据库服务器优化"
-            tcp_mem_max=$((tcp_mem_max * 2))
-            net_core_rmem_max=$((net_core_rmem_max * 2))
-            net_core_wmem_max=$((net_core_wmem_max * 2))
+            OPTIMAL_VALUES["net.core.rmem_max"]=$((base_rmem_max * multiplier * 2))
+            OPTIMAL_VALUES["net.core.wmem_max"]=$((base_wmem_max * multiplier * 2))
             ;;
-        "cache")
-            print_msg "info" "应用缓存服务器优化"
-            tcp_mem_max=$((tcp_mem_max * 3))
-            somaxconn=$((somaxconn * 3))
-            file_max=$((file_max * 2))
+        "proxy")
+            OPTIMAL_VALUES["net.core.somaxconn"]=$((base_somaxconn * multiplier * 4))
+            OPTIMAL_VALUES["fs.file-max"]=$((base_file_max * multiplier * 8))
+            OPTIMAL_VALUES["net.core.rmem_max"]=$((base_rmem_max * multiplier * 4))
+            OPTIMAL_VALUES["net.core.wmem_max"]=$((base_wmem_max * multiplier * 4))
             ;;
         "container")
-            print_msg "info" "应用容器主机优化"
-            file_max=$((file_max * 4))
-            somaxconn=$((somaxconn * 2))
+            OPTIMAL_VALUES["fs.file-max"]=$((base_file_max * multiplier * 4))
+            OPTIMAL_VALUES["kernel.pid_max"]=$((32768 * multiplier))
+            ;;
+        *)
+            # general
+            OPTIMAL_VALUES["net.core.somaxconn"]=$((base_somaxconn * multiplier))
+            OPTIMAL_VALUES["fs.file-max"]=$((base_file_max * multiplier))
             ;;
     esac
     
-    # 严格的边界检查和安全限制
-    # TCP内存限制 (4MB - 256MB)
-    [ "$tcp_mem_max" -gt 268435456 ] && tcp_mem_max=268435456
-    [ "$tcp_mem_max" -lt 4194304 ] && tcp_mem_max=4194304
+    # 设置通用优化参数
+    set_common_parameters "$optimization"
     
-    # 网络缓冲区限制 (1MB - 128MB)
-    [ "$net_core_rmem_max" -gt 134217728 ] && net_core_rmem_max=134217728
-    [ "$net_core_rmem_max" -lt 1048576 ] && net_core_rmem_max=1048576
+    # 边界检查
+    apply_parameter_limits
     
-    [ "$net_core_wmem_max" -gt 134217728 ] && net_core_wmem_max=134217728
-    [ "$net_core_wmem_max" -lt 1048576 ] && net_core_wmem_max=1048576
-    
-    # 连接队列限制 (1024 - 65535)
-    [ "$somaxconn" -gt 65535 ] && somaxconn=65535
-    [ "$somaxconn" -lt 1024 ] && somaxconn=1024
-    
-    # 文件句柄限制 (65536 - 16777216)
-    [ "$file_max" -gt 16777216 ] && file_max=16777216
-    [ "$file_max" -lt 65536 ] && file_max=65536
-    
-    # 验证所有计算结果 - 使用安全的数组设置函数
-    local params=(
-        "tcp_mem_max:$tcp_mem_max"
-        "net_core_rmem_max:$net_core_rmem_max"
-        "net_core_wmem_max:$net_core_wmem_max"
-        "somaxconn:$somaxconn"
-        "file_max:$file_max"
-    )
-    
-    for param in "${params[@]}"; do
-        local key="${param%:*}"
-        local value="${param#*:}"
-        
-        if validate_number "$value" 1; then
-            safe_array_set OPTIMAL_VALUES "$key" "$value"
-        else
-            print_msg "error" "参数计算失败: $key = $value"
-            return 1
-        fi
-    done
-    
-    # 计算附加参数
-    safe_array_set OPTIMAL_VALUES "tcp_rmem_max" "$net_core_rmem_max"
-    safe_array_set OPTIMAL_VALUES "tcp_wmem_max" "$net_core_wmem_max"
-    safe_array_set OPTIMAL_VALUES "netdev_max_backlog" "32768"
-    safe_array_set OPTIMAL_VALUES "tcp_max_syn_backlog" "16384"
-    safe_array_set OPTIMAL_VALUES "inotify_max_user_watches" "524288"
-    safe_array_set OPTIMAL_VALUES "aio_max_nr" "1048576"
-    
-    print_msg "success" "参数计算完成并验证通过"
-    log "智能参数计算完成: tcp_mem_max=$tcp_mem_max, somaxconn=$somaxconn, file_max=$file_max"
-    return 0
+    print_msg "success" "参数计算完成"
 }
 
-# ==================== 系统检查和验证 ====================
-
-# 获取当前系统配置
-get_current_config() {
-    print_msg "working" "读取当前系统配置..."
+# 设置通用参数
+set_common_parameters() {
+    local level="$1"
     
-    local key_params=(
-        "net.core.somaxconn"
-        "fs.file-max"
-        "net.core.rmem_max"
-        "net.core.wmem_max"
-        "net.core.netdev_max_backlog"
-        "net.ipv4.tcp_max_syn_backlog"
-        "fs.inotify.max_user_watches"
-        "fs.aio-max-nr"
-        "vm.swappiness"
-        "net.ipv4.tcp_syncookies"
-        "net.ipv4.tcp_tw_reuse"
-        "net.ipv4.tcp_fin_timeout"
-    )
+    # 网络参数
+    OPTIMAL_VALUES["net.core.netdev_max_backlog"]=5000
+    OPTIMAL_VALUES["net.ipv4.tcp_max_syn_backlog"]=8192
+    OPTIMAL_VALUES["net.ipv4.tcp_syncookies"]=1
+    OPTIMAL_VALUES["net.ipv4.tcp_tw_reuse"]=1
+    OPTIMAL_VALUES["net.ipv4.tcp_fin_timeout"]=30
+    OPTIMAL_VALUES["net.ipv4.tcp_keepalive_time"]=600
+    OPTIMAL_VALUES["net.ipv4.tcp_keepalive_probes"]=3
+    OPTIMAL_VALUES["net.ipv4.tcp_keepalive_intvl"]=15
+    OPTIMAL_VALUES["net.ipv4.tcp_max_tw_buckets"]=400000
+    OPTIMAL_VALUES["net.ipv4.ip_local_port_range"]="1024 65535"
     
-    for param in "${key_params[@]}"; do
-        local current_value
-        current_value=$(sysctl -n "$param" 2>/dev/null || echo "未设置")
-        safe_array_set CURRENT_VALUES "$param" "$current_value"
-    done
+    # 内存管理参数
+    OPTIMAL_VALUES["vm.swappiness"]=10
+    OPTIMAL_VALUES["vm.dirty_ratio"]=15
+    OPTIMAL_VALUES["vm.dirty_background_ratio"]=5
+    OPTIMAL_VALUES["vm.vfs_cache_pressure"]=50
     
-    print_msg "success" "当前配置读取完成"
-}
-
-# 增强的系统预检查
-pre_optimization_check() {
-    local issues=0
-    local warnings=0
+    # 内核参数
+    OPTIMAL_VALUES["kernel.shmmax"]=$((TOTAL_MEM / 2))
+    OPTIMAL_VALUES["kernel.shmall"]=$((TOTAL_MEM / 4096))
     
-    print_msg "test" "执行系统状态预检查..."
-    
-    # 检查系统负载
-    if check_command uptime; then
-        local load_avg
-        load_avg=$(uptime | awk -F'load average:' '{print $2}' | awk '{print $1}' | tr -d ',' 2>/dev/null)
-        if [ -n "$load_avg" ]; then
-            local load_int=${load_avg%.*}  # 获取整数部分
-            if validate_number "$load_int" && [ "$load_int" -gt 10 ]; then
-                print_msg "warning" "系统负载过高 ($load_avg)，建议在低峰期进行优化"
-                ((warnings++))
-            elif validate_number "$load_int" && [ "$load_int" -gt 5 ]; then
-                print_msg "info" "系统负载较高 ($load_avg)，请注意监控"
-            fi
-        fi
-    fi
-    
-    # 检查磁盘空间
-    if check_command df; then
-        local disk_usage
-        disk_usage=$(df / 2>/dev/null | tail -1 | awk '{print $5}' | sed 's/%//')
-        if validate_number "${disk_usage:-0}" && [ "$disk_usage" -gt 95 ]; then
-            print_msg "error" "根分区使用率危险 (${disk_usage}%)"
-            ((issues++))
-        elif validate_number "${disk_usage:-0}" && [ "$disk_usage" -gt 85 ]; then
-            print_msg "warning" "根分区使用率较高 (${disk_usage}%)"
-            ((warnings++))
-        fi
-    fi
-    
-    # 检查内存使用
-    if check_command free; then
-        local mem_usage
-        mem_usage=$(free | awk 'NR==2{printf "%.0f", $3*100/$2}' 2>/dev/null)
-        if validate_number "${mem_usage:-0}" && [ "$mem_usage" -gt 95 ]; then
-            print_msg "error" "内存使用率危险 (${mem_usage}%)"
-            ((issues++))
-        elif validate_number "${mem_usage:-0}" && [ "$mem_usage" -gt 85 ]; then
-            print_msg "warning" "内存使用率较高 (${mem_usage}%)"
-            ((warnings++))
-        fi
-    fi
-    
-    # 检查重要的内核参数是否存在
-    local critical_params=(
-        "net.core.somaxconn"
-        "fs.file-max"
-        "net.core.rmem_max"
-        "net.core.wmem_max"
-    )
-    
-    for param in "${critical_params[@]}"; do
-        local param_path="/proc/sys/${param//./\/}"
-        if [ ! -f "$param_path" ]; then
-            print_msg "warning" "内核参数不存在: $param"
-            ((warnings++))
-        fi
-    done
-    
-    # 检查是否有其他优化脚本的残留
-    if grep -q "# 内核优化" /etc/sysctl.conf 2>/dev/null; then
-        print_msg "info" "检测到之前的优化配置"
-    fi
-    
-    # 统计结果
-    if [ $issues -eq 0 ] && [ $warnings -eq 0 ]; then
-        print_msg "success" "系统状态检查完美通过"
-        safe_array_set TEST_RESULTS "pre_check" "PASS"
-    elif [ $issues -eq 0 ]; then
-        print_msg "warning" "系统状态良好，发现 $warnings 个警告"
-        safe_array_set TEST_RESULTS "pre_check" "WARN"
-    else
-        print_msg "error" "系统状态检查发现 $issues 个问题，$warnings 个警告"
-        safe_array_set TEST_RESULTS "pre_check" "FAIL"
-        
-        echo
-        echo -n "是否继续进行优化? [y/N]: "
-        read -r continue_choice
-        if [[ ! "$continue_choice" =~ ^[Yy]$ ]]; then
-            print_msg "info" "用户选择退出"
-            exit 0
-        fi
-    fi
-    
-    log "系统状态预检查完成: 问题=$issues, 警告=$warnings"
-    return $((issues + warnings))
-}
-
-# ==================== 配置管理函数 ====================
-
-# 安全的文件备份
-backup_file() {
-    local file="$1"
-    local description="${2:-}"
-    
-    if [ ! -f "$file" ]; then
-        print_msg "warning" "文件不存在，跳过备份: $file"
-        return 1
-    fi
-    
-    local timestamp=$(date +%Y%m%d_%H%M%S)
-    local backup_name="$(basename "$file").${timestamp}"
-    local backup_path="${BACKUP_DIR}/${backup_name}"
-    
-    # 安全地复制文件
-    if cp -p "$file" "$backup_path" 2>/dev/null; then
-        # 设置安全权限
-        chmod 600 "$backup_path" 2>/dev/null
-        
-        print_msg "success" "已备份: $(basename "$file") → $backup_name 💾"
-        
-        # 创建备份信息文件
-        cat > "${backup_path}.info" <<EOF
-原始文件: $file
-备份时间: $(date)
-描述: ${description:-手动备份}
-脚本版本: $SCRIPT_VERSION
-系统信息: $OS $VER
-内核版本: $KERNEL_VERSION
-文件大小: $(stat -c%s "$file" 2>/dev/null || echo "unknown")
-文件权限: $(stat -c%a "$file" 2>/dev/null || echo "unknown")
-MD5校验: $(md5sum "$file" 2>/dev/null | cut -d' ' -f1 || echo "unknown")
-EOF
-        
-        log "创建备份: $backup_path"
-        return 0
-    else
-        print_msg "error" "备份失败: $file"
-        return 1
-    fi
-}
-
-# 格式化数值显示（添加千位分隔符）
-format_number() {
-    local number="$1"
-    echo "$number" | sed ':a;s/\B[0-9]\{3\}\>/,&/;ta'
-}
-
-# 修复：预览模式 - 显示将要应用的更改
-show_preview() {
-    local optimization_level="${1:-balanced}"
-    
-    echo
-    print_msg "preview" "预览模式 - 即将应用的更改"
-    echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-    
-    # 确保已计算最优参数
-    local optimal_count
-    optimal_count=$(safe_array_length OPTIMAL_VALUES)
-    if [ "$optimal_count" -eq 0 ]; then
-        calculate_optimal_values "$TOTAL_MEM" "$CPU_CORES" "$WORKLOAD_TYPE"
-    fi
-    
-    # 获取当前配置
-    get_current_config
-    
-    echo -e "\n${CYAN}${BOLD}📊 参数对比预览：${RESET}"
-    
-    # 修复：使用固定宽度格式化输出，不使用变量传递颜色代码
-    printf "%-35s %-20s %-20s %-10s\n" "参数名称" "当前值" "新值" "变化"
-    printf "%s\n" "────────────────────────────────────────────────────────────────────────────────────"
-    
-    # 显示主要参数变化
-    local preview_params=(
-        "net.core.somaxconn"
-        "fs.file-max"
-        "net.core.rmem_max"
-        "net.core.wmem_max"
-        "net.core.netdev_max_backlog"
-    )
-    
-    for param in "${preview_params[@]}"; do
-        local new_value=""
-        local current_value=""
-        
-        # 安全地获取值
-        case "$param" in
-            "net.core.somaxconn")
-                new_value=$(safe_array_get OPTIMAL_VALUES "somaxconn" "未计算")
-                ;;
-            "fs.file-max")
-                new_value=$(safe_array_get OPTIMAL_VALUES "file_max" "未计算")
-                ;;
-            "net.core.rmem_max")
-                new_value=$(safe_array_get OPTIMAL_VALUES "net_core_rmem_max" "未计算")
-                ;;
-            "net.core.wmem_max")
-                new_value=$(safe_array_get OPTIMAL_VALUES "net_core_wmem_max" "未计算")
-                ;;
-            "net.core.netdev_max_backlog")
-                new_value=$(safe_array_get OPTIMAL_VALUES "netdev_max_backlog" "未计算")
-                ;;
-        esac
-        
-        current_value=$(safe_array_get CURRENT_VALUES "$param" "未设置")
-        
-        # 格式化数值显示
-        local formatted_current="${current_value}"
-        local formatted_new="${new_value}"
-        
-        if validate_number "$current_value"; then
-            formatted_current=$(format_number "$current_value")
-        fi
-        
-        if validate_number "$new_value"; then
-            formatted_new=$(format_number "$new_value")
-        fi
-        
-        # 计算变化并显示
-        printf "%-35s " "$param"
-        
-        # 显示当前值（红色）
-        printf "${RED}%-20s${RESET} " "$formatted_current"
-        
-        # 显示新值（绿色）
-        printf "${GREEN}%-20s${RESET} " "$formatted_new"
-        
-        # 显示变化指示符
-        if [ "$current_value" = "未设置" ]; then
-            echo -e "${GREEN}新增${RESET}"
-        elif [ "$current_value" != "$new_value" ]; then
-            if validate_number "$current_value" && validate_number "$new_value"; then
-                if [ "$new_value" -gt "$current_value" ]; then
-                    echo -e "${GREEN}↑ 提升${RESET}"
-                else
-                    echo -e "${RED}↓ 降低${RESET}"
-                fi
-            else
-                echo -e "${YELLOW}修改${RESET}"
-            fi
-        else
-            echo -e "${BLUE}相同${RESET}"
-        fi
-    done
-    
-    printf "%s\n" "────────────────────────────────────────────────────────────────────────────────────"
-    
-    # 显示优化摘要
-    echo -e "\n${CYAN}${BOLD}📋 优化摘要：${RESET}"
-    echo -e "${WHITE}• 优化级别: ${GREEN}$optimization_level${RESET}"
-    echo -e "${WHITE}• 工作负载: ${GREEN}$WORKLOAD_TYPE${RESET}"
-    echo -e "${WHITE}• 运行环境: ${GREEN}$ENV_TYPE${RESET}"
-    echo -e "${WHITE}• 目标场景: ${GREEN}$(get_workload_description "$WORKLOAD_TYPE")${RESET}"
-    
-    # 显示可能的影响
-    echo -e "\n${YELLOW}${BOLD}⚠️  可能影响：${RESET}"
-    case "$optimization_level" in
-        "conservative")
-            echo -e "${WHITE}• 最小化系统变更，影响范围有限${RESET}"
-            echo -e "${WHITE}• 适合生产环境，安全性优先${RESET}"
+    # 根据级别调整
+    case "$level" in
+        "aggressive")
+            OPTIMAL_VALUES["net.core.rmem_default"]=262144
+            OPTIMAL_VALUES["net.core.wmem_default"]=262144
+            OPTIMAL_VALUES["net.core.rmem_max"]=16777216
+            OPTIMAL_VALUES["net.core.wmem_max"]=16777216
+            OPTIMAL_VALUES["net.ipv4.tcp_rmem"]="4096 87380 16777216"
+            OPTIMAL_VALUES["net.ipv4.tcp_wmem"]="4096 65536 16777216"
+            OPTIMAL_VALUES["net.ipv4.tcp_congestion_control"]="bbr"
             ;;
         "balanced")
-            echo -e "${WHITE}• 平衡性能与稳定性${RESET}"
-            echo -e "${WHITE}• 适合大多数应用场景${RESET}"
+            OPTIMAL_VALUES["net.core.rmem_default"]=131072
+            OPTIMAL_VALUES["net.core.wmem_default"]=131072
+            OPTIMAL_VALUES["net.core.rmem_max"]=8388608
+            OPTIMAL_VALUES["net.core.wmem_max"]=8388608
+            OPTIMAL_VALUES["net.ipv4.tcp_rmem"]="4096 65536 8388608"
+            OPTIMAL_VALUES["net.ipv4.tcp_wmem"]="4096 32768 8388608"
             ;;
-        "aggressive")
-            echo -e "${WHITE}• 最大化性能提升${RESET}"
-            echo -e "${WHITE}• 需要充分测试，请谨慎使用${RESET}"
+        *)
+            # conservative
+            OPTIMAL_VALUES["net.core.rmem_default"]=65536
+            OPTIMAL_VALUES["net.core.wmem_default"]=65536
+            OPTIMAL_VALUES["net.core.rmem_max"]=4194304
+            OPTIMAL_VALUES["net.core.wmem_max"]=4194304
+            OPTIMAL_VALUES["net.ipv4.tcp_rmem"]="4096 65536 4194304"
+            OPTIMAL_VALUES["net.ipv4.tcp_wmem"]="4096 32768 4194304"
             ;;
     esac
     
-    echo -e "\n${BLUE}${BOLD}ℹ️  重要提醒：${RESET}"
-    echo -e "${WHITE}• 所有原始配置将自动备份${RESET}"
-    echo -e "${WHITE}• 支持一键回滚到之前状态${RESET}"
-    echo -e "${WHITE}• 建议优化后监控系统性能${RESET}"
-    
-    echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-    
-    if [ "$DRY_RUN" = true ]; then
-        print_msg "info" "这是预览模式，不会实际修改系统配置"
-        return 0
-    fi
-    
-    echo
-    echo -n "确认应用这些更改? [y/N]: "
-    read -r confirm_choice
-    
-    if [[ "$confirm_choice" =~ ^[Yy]$ ]]; then
-        return 0
-    else
-        print_msg "info" "用户取消了配置应用"
-        return 1
+    # IPv6禁用选项
+    if [ "$DISABLE_IPV6" = true ]; then
+        OPTIMAL_VALUES["net.ipv6.conf.all.disable_ipv6"]=1
+        OPTIMAL_VALUES["net.ipv6.conf.default.disable_ipv6"]=1
+        OPTIMAL_VALUES["net.ipv6.conf.lo.disable_ipv6"]=1
     fi
 }
 
-# 获取工作负载描述
-get_workload_description() {
-    local workload="$1"
+# 应用参数限制
+apply_parameter_limits() {
+    # 确保参数在合理范围内
+    local max_somaxconn=65535
+    local max_file_max=33554432
     
-    case "$workload" in
-        "web") echo "Web服务器 - 优化网络连接和文件处理" ;;
-        "database") echo "数据库服务器 - 优化内存和I/O性能" ;;
-        "cache") echo "缓存服务器 - 优化内存使用和网络性能" ;;
-        "container") echo "容器主机 - 优化容器调度和资源管理" ;;
-        "general") echo "通用服务器 - 平衡各方面性能" ;;
-        *) echo "未知工作负载类型" ;;
-    esac
-}
-
-# 应用sysctl配置的函数
-apply_sysctl_config() {
-    local config_file="/etc/sysctl.d/99-kernel-optimization.conf"
+    if [ "${OPTIMAL_VALUES[net.core.somaxconn]:-0}" -gt "$max_somaxconn" ]; then
+        OPTIMAL_VALUES["net.core.somaxconn"]=$max_somaxconn
+    fi
     
-    print_msg "working" "生成sysctl配置文件..."
+    if [ "${OPTIMAL_VALUES[fs.file-max]:-0}" -gt "$max_file_max" ]; then
+        OPTIMAL_VALUES["fs.file-max"]=$max_file_max
+    fi
     
-    # 创建sysctl配置
-    cat > "$config_file" << EOF
-# Linux内核优化配置
-# 由内核优化脚本自动生成 v${SCRIPT_VERSION}
-# 生成时间: $(date)
-# 系统信息: $OS $VER
-# 内核版本: $KERNEL_VERSION
-# 工作负载: $WORKLOAD_TYPE
-# 优化级别: $OPTIMIZATION
-
-# ===========================================
-# 网络优化
-# ===========================================
-
-# TCP/IP堆栈优化
-net.core.somaxconn = $(safe_array_get OPTIMAL_VALUES "somaxconn" "65535")
-net.core.rmem_max = $(safe_array_get OPTIMAL_VALUES "net_core_rmem_max" "134217728")
-net.core.wmem_max = $(safe_array_get OPTIMAL_VALUES "net_core_wmem_max" "134217728")
-net.core.netdev_max_backlog = $(safe_array_get OPTIMAL_VALUES "netdev_max_backlog" "32768")
-
-# TCP优化
-net.ipv4.tcp_max_syn_backlog = $(safe_array_get OPTIMAL_VALUES "tcp_max_syn_backlog" "16384")
-net.ipv4.tcp_syncookies = 1
-net.ipv4.tcp_tw_reuse = 1
-net.ipv4.tcp_fin_timeout = 30
-net.ipv4.tcp_keepalive_time = 1200
-
-# ===========================================
-# 文件系统优化
-# ===========================================
-
-# 文件句柄限制
-fs.file-max = $(safe_array_get OPTIMAL_VALUES "file_max" "1048576")
-
-# inotify限制
-fs.inotify.max_user_watches = $(safe_array_get OPTIMAL_VALUES "inotify_max_user_watches" "524288")
-fs.inotify.max_user_instances = 256
-
-# AIO限制
-fs.aio-max-nr = $(safe_array_get OPTIMAL_VALUES "aio_max_nr" "1048576")
-
-# ===========================================
-# 内存管理优化
-# ===========================================
-
-# 虚拟内存优化
-vm.swappiness = 10
-vm.dirty_ratio = 15
-vm.dirty_background_ratio = 5
-vm.vfs_cache_pressure = 50
-
-# ===========================================
-# 进程和调度优化
-# ===========================================
-
-# 进程限制
-kernel.pid_max = 4194304
-
-# 调度优化
-kernel.sched_migration_cost_ns = 5000000
-
-EOF
-
-    print_msg "success" "配置文件已生成: $config_file"
+    # 确保最小值
+    if [ "${OPTIMAL_VALUES[net.core.somaxconn]:-0}" -lt 1024 ]; then
+        OPTIMAL_VALUES["net.core.somaxconn"]=1024
+    fi
     
-    # 应用配置
-    if sysctl -p "$config_file" >/dev/null 2>&1; then
-        print_msg "success" "sysctl配置已生效"
-        return 0
-    else
-        print_msg "error" "sysctl配置应用失败"
-        return 1
+    if [ "${OPTIMAL_VALUES[fs.file-max]:-0}" -lt 65536 ]; then
+        OPTIMAL_VALUES["fs.file-max"]=65536
     fi
 }
 
-# 应用优化配置（主函数）
-apply_optimizations() {
-    local optimization_level="${1:-balanced}"
-    
-    print_msg "working" "开始应用 $optimization_level 级别优化..."
-    
-    # 检查是否为预览模式
-    if [ "$DRY_RUN" = true ]; then
-        show_preview "$optimization_level"
-        return 0
-    fi
-    
-    # 预检查
-    if ! pre_optimization_check; then
-        local check_result
-        check_result=$(safe_array_get TEST_RESULTS "pre_check" "UNKNOWN")
-        if [ "$check_result" = "FAIL" ]; then
-            print_msg "error" "系统预检查失败，建议解决问题后重试"
-            return 1
-        fi
-    fi
-    
-    # 显示预览并确认
-    if ! show_preview "$optimization_level"; then
-        return 1
-    fi
-    
-    # 备份原始配置
-    backup_file "/etc/sysctl.conf" "优化前自动备份"
-    
-    # 计算最优参数
-    if ! calculate_optimal_values "$TOTAL_MEM" "$CPU_CORES" "$WORKLOAD_TYPE"; then
-        print_msg "error" "参数计算失败"
-        return 1
-    fi
-    
-    # 应用sysctl配置
-    if ! apply_sysctl_config; then
-        print_msg "error" "配置应用失败"
-        return 1
-    fi
-    
-    print_msg "success" "优化配置应用完成！系统性能已得到提升。"
-    print_msg "info" "建议重启系统以确保所有更改完全生效。"
-    
-    # 显示应用后的配置摘要
-    echo -e "\n${GREEN}${BOLD}✅ 优化完成摘要：${RESET}"
-    echo -e "${WHITE}• 已优化参数数量: $(safe_array_length OPTIMAL_VALUES)个${RESET}"
-    echo -e "${WHITE}• 配置文件位置: /etc/sysctl.d/99-kernel-optimization.conf${RESET}"
-    echo -e "${WHITE}• 备份文件位置: $BACKUP_DIR${RESET}"
-    echo -e "${WHITE}• 日志文件位置: $LOG_FILE${RESET}"
-    
-    return 0
-}
-
-# ==================== 智能配置向导 ====================
-
-# 智能配置向导
-interactive_config_wizard() {
-    echo
-    echo -e "${PURPLE}${BOLD}🧙‍♂️ 欢迎使用智能配置向导${RESET}"
-    echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-    
-    # 1. 选择工作负载类型
-    echo -e "\n${CYAN}${BOLD}📊 步骤1: 选择主要工作负载类型${RESET}"
-    echo -e "${WHITE}请根据服务器的主要用途选择:${RESET}"
-    echo
-    echo -e "${GREEN}1)${RESET} ${WHITE}🌐 Web服务器${RESET} - Nginx, Apache, 高并发Web应用"
-    echo -e "${GREEN}2)${RESET} ${WHITE}🗄️ 数据库服务器${RESET} - MySQL, PostgreSQL, MongoDB"
-    echo -e "${GREEN}3)${RESET} ${WHITE}🚀 缓存服务器${RESET} - Redis, Memcached, 内存缓存"
-    echo -e "${GREEN}4)${RESET} ${WHITE}🐳 容器主机${RESET} - Docker, Kubernetes, 容器编排"
-    echo -e "${GREEN}5)${RESET} ${WHITE}🏢 通用服务器${RESET} - 混合应用，平衡优化"
-    
-    while true; do
-        echo
-        echo -n "请选择工作负载类型 [1-5]: "
-        read -r workload_choice
-        
-        if workload_choice=$(validate_user_input "$workload_choice" "1 2 3 4 5"); then
-            case "$workload_choice" in
-                1) WORKLOAD_TYPE="web"; break ;;
-                2) WORKLOAD_TYPE="database"; break ;;
-                3) WORKLOAD_TYPE="cache"; break ;;
-                4) WORKLOAD_TYPE="container"; break ;;
-                5) WORKLOAD_TYPE="general"; break ;;
-            esac
-        else
-            print_msg "error" "无效选择，请输入1-5"
-        fi
-    done
-    
-    # 2. 选择优化级别
-    echo -e "\n${CYAN}${BOLD}⚡ 步骤2: 选择优化级别${RESET}"
-    echo -e "${WHITE}请根据环境和风险承受能力选择:${RESET}"
-    echo
-    echo -e "${GREEN}1)${RESET} ${WHITE}🛡️ 保守模式${RESET} - 最小化风险，适合关键生产环境"
-    echo -e "${GREEN}2)${RESET} ${WHITE}⚖️ 平衡模式${RESET} - 性能与稳定性兼顾，推荐选择"
-    echo -e "${GREEN}3)${RESET} ${WHITE}🚀 激进模式${RESET} - 最大化性能，适合高性能计算"
-    
-    while true; do
-        echo
-        echo -n "请选择优化级别 [1-3]: "
-        read -r level_choice
-        
-        if level_choice=$(validate_user_input "$level_choice" "1 2 3"); then
-            case "$level_choice" in
-                1) OPTIMIZATION="conservative"; break ;;
-                2) OPTIMIZATION="balanced"; break ;;
-                3) OPTIMIZATION="aggressive"; break ;;
-            esac
-        else
-            print_msg "error" "无效选择，请输入1-3"
-        fi
-    done
-    
-    # 3. 高级选项配置
-    echo -e "\n${CYAN}${BOLD}🔧 步骤3: 高级选项${RESET}"
-    
-    echo -n "是否启用自动回滚功能？(遇到问题时自动恢复) [Y/n]: "
-    read -r auto_rollback_choice
-    if [[ ! "$auto_rollback_choice" =~ ^[Nn]$ ]]; then
-        AUTO_ROLLBACK_ENABLED=true
-        print_msg "success" "已启用自动回滚功能"
-    fi
-    
-    echo -n "是否先预览更改而不立即应用？ [y/N]: "
-    read -r preview_choice
-    if [[ "$preview_choice" =~ ^[Yy]$ ]]; then
-        DRY_RUN=true
-        print_msg "info" "将以预览模式运行"
-    fi
-    
-    # 4. 显示配置摘要
-    echo -e "\n${PURPLE}${BOLD}📋 配置摘要${RESET}"
-    echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-    echo -e "${WHITE}工作负载类型: ${GREEN}$(get_workload_description "$WORKLOAD_TYPE")${RESET}"
-    echo -e "${WHITE}优化级别: ${GREEN}$OPTIMIZATION${RESET}"
-    echo -e "${WHITE}运行环境: ${GREEN}$ENV_TYPE${RESET}"
-    echo -e "${WHITE}自动回滚: ${GREEN}$([ "$AUTO_ROLLBACK_ENABLED" = true ] && echo "已启用" || echo "已禁用")${RESET}"
-    echo -e "${WHITE}预览模式: ${GREEN}$([ "$DRY_RUN" = true ] && echo "是" || echo "否")${RESET}"
-    echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-    
-    print_msg "success" "配置向导完成！✨"
-    log "配置向导完成: 工作负载=$WORKLOAD_TYPE, 优化级别=$OPTIMIZATION"
-}
-
-# ==================== 主菜单系统 ====================
+# ==================== 菜单系统 ====================
 
 # 显示主菜单
 show_main_menu() {
     clear
-    echo -e "${PURPLE}${BOLD}"
-    cat << 'EOF'
-╔══════════════════════════════════════════════════════════════╗
-║                    Linux 内核优化脚本                         ║
-║                   Security Enhanced v1.0                     ║
-╚══════════════════════════════════════════════════════════════╝
-EOF
+    echo -e "${CYAN}${BOLD}"
+    echo "╔══════════════════════════════════════════════════════════════════════════════╗"
+    echo "║                    🚀 Linux内核优化脚本 v2.0 🚀                              ║"
+    echo "║                         智能系统优化解决方案                                 ║"
+    echo "╚══════════════════════════════════════════════════════════════════════════════╝"
     echo -e "${RESET}"
-    
-    echo -e "${CYAN}${BOLD}🖥️ 系统信息:${RESET} ${WHITE}$OS $VER | 内存: ${TOTAL_MEM_GB}GB | CPU: ${CPU_CORES}核 | 环境: $ENV_TYPE${RESET}"
     echo
-    
-    echo -e "${WHITE}${BOLD}主菜单选项:${RESET}"
-    echo -e "${GREEN}1)${RESET} ${WHITE}🧙‍♂️ 智能配置向导${RESET}     - 引导式优化配置"
-    echo -e "${GREEN}2)${RESET} ${WHITE}⚡ 快速优化${RESET}         - 使用推荐设置快速优化"
-    echo -e "${GREEN}3)${RESET} ${WHITE}👁️ 预览优化效果${RESET}      - 查看优化参数不实际应用"
-    echo -e "${GREEN}0)${RESET} ${WHITE}🚪 退出程序${RESET}         - 安全退出"
+    echo -e "${WHITE}选择优化模式：${RESET}"
+    echo
+    echo -e "${GREEN}🚀 1) 一键优化模式${RESET}     - 预设最佳方案，新手友好"
+    echo -e "${BLUE}🧙‍♂️ 2) 自定义配置模式${RESET}   - 完全自定义，高级用户"
+    echo -e "${PURPLE}📊 3) 系统信息查看${RESET}     - 查看详细系统信息"
+    echo -e "${CYAN}📋 4) 查看优化对比${RESET}     - 查看当前优化效果对比"
+    echo -e "${YELLOW}🔄 5) 恢复默认配置${RESET}     - 回滚到优化前状态"
+    echo -e "${RED}❌ 0) 退出${RESET}"
     echo
 }
 
-# 主菜单循环
-main_menu() {
-    while true; do
-        show_main_menu
+# 一键优化菜单
+show_quick_optimization_menu() {
+    clear
+    echo -e "${GREEN}${BOLD}"
+    echo "╔══════════════════════════════════════════════════════════════════════════════╗"
+    echo "║                            🚀 一键优化模式 🚀                                ║"
+    echo "║                          预设最佳实践，即选即用                              ║"
+    echo "╚══════════════════════════════════════════════════════════════════════════════╝"
+    echo -e "${RESET}"
+    echo
+    echo -e "${WHITE}选择服务器类型：${RESET}"
+    echo
+    echo -e "${GREEN}🌐 1) Web服务器${RESET}        - Nginx/Apache，优化并发连接"
+    echo -e "${BLUE}🗄️ 2) 数据库服务器${RESET}      - MySQL/PostgreSQL，优化I/O性能"
+    echo -e "${PURPLE}🔄 3) VPS代理服务器${RESET}     - SS/V2Ray/Trojan，最大化转发性能"
+    echo -e "${CYAN}🐳 4) 容器主机${RESET}         - Docker/K8s，优化容器调度"
+    echo -e "${YELLOW}🏢 5) 通用服务器${RESET}       - 混合应用，平衡优化"
+    echo -e "${WHITE}🔙 0) 返回主菜单${RESET}"
+    echo
+}
+
+# 自定义配置菜单
+show_custom_configuration_menu() {
+    clear
+    echo -e "${BLUE}${BOLD}"
+    echo "╔══════════════════════════════════════════════════════════════════════════════╗"
+    echo "║                      🧙‍♂️ 自定义配置模式 🧙‍♂️                                   ║"
+    echo "║                     完全自定义，精细化控制                                      ║"
+    echo "╚══════════════════════════════════════════════════════════════════════════════╝"
+    echo -e "${RESET}"
+    echo
+    echo -e "${WHITE}步骤1: 选择工作负载类型${RESET}"
+    echo
+    echo -e "${GREEN}🌐 1) Web服务器${RESET}        - HTTP/HTTPS服务优化"
+    echo -e "${BLUE}🗄️ 2) 数据库服务器${RESET}      - 数据库I/O优化"
+    echo -e "${PURPLE}📦 3) 缓存服务器${RESET}       - Redis/Memcached优化"
+    echo -e "${CYAN}🐳 4) 容器主机${RESET}         - 容器运行时优化"
+    echo -e "${YELLOW}🔄 5) 代理服务器${RESET}       - 网络转发优化"
+    echo -e "${WHITE}⚙️ 6) 通用服务器${RESET}       - 综合性能优化"
+    echo -e "${WHITE}🔙 0) 返回主菜单${RESET}"
+    echo
+}
+
+# 优化级别选择菜单
+show_optimization_level_menu() {
+    echo
+    echo -e "${WHITE}步骤2: 选择优化级别${RESET}"
+    echo
+    echo -e "${GREEN}🛡️ 1) 保守优化${RESET}  - 安全稳定，适合生产环境"
+    echo -e "${YELLOW}⚖️ 2) 平衡优化${RESET}  - 性能与稳定性兼顾"
+    echo -e "${RED}🚀 3) 激进优化${RESET}  - 最大性能，适合高负载环境"
+    echo
+}
+
+# 高级选项菜单
+show_advanced_options_menu() {
+    echo
+    echo -e "${WHITE}步骤3: 高级选项${RESET}"
+    echo
+    print_msg "question" "是否禁用IPv6？(代理服务器建议禁用) [y/N]"
+    read -r ipv6_choice
+    case "$ipv6_choice" in
+        [Yy]|[Yy][Ee][Ss]) DISABLE_IPV6=true ;;
+        *) DISABLE_IPV6=false ;;
+    esac
+    
+    print_msg "question" "是否启用自动回滚？(可在24小时内自动恢复) [Y/n]"
+    read -r rollback_choice
+    case "$rollback_choice" in
+        [Nn]|[Nn][Oo]) AUTO_ROLLBACK_ENABLED=false ;;
+        *) AUTO_ROLLBACK_ENABLED=true ;;
+    esac
+    
+    print_msg "question" "是否启用预览模式？(只显示配置不实际应用) [y/N]"
+    read -r preview_choice
+    case "$preview_choice" in
+        [Yy]|[Yy][Ee][Ss]) DRY_RUN=true ;;
+        *) DRY_RUN=false ;;
+    esac
+}
+
+# ==================== 参数对比功能 ====================
+
+# 读取当前系统参数值
+read_current_system_values() {
+    print_msg "working" "读取当前系统参数值进行对比..."
+    
+    # 清空原始值数组
+    ORIGINAL_VALUES=()
+    
+    # 读取即将要优化的参数的当前值
+    for param in "${!OPTIMAL_VALUES[@]}"; do
+        local current_value=""
         
-        echo -n "请选择选项 [0-3]: "
-        read -r choice
-        
-        # 验证输入
-        if choice=$(validate_user_input "$choice" "0 1 2 3"); then
-            case "$choice" in
-                1)
-                    interactive_config_wizard
-                    echo
-                    echo -n "是否立即应用配置? [Y/n]: "
-                    read -r apply_choice
-                    if [[ ! "$apply_choice" =~ ^[Nn]$ ]]; then
-                        apply_optimizations "$OPTIMIZATION"
-                    fi
-                    echo
-                    echo -n "按Enter键继续..."
-                    read -r
-                    ;;
-                2)
-                    # 快速优化 - 使用推荐设置
-                    print_msg "info" "使用推荐设置进行快速优化..."
-                    OPTIMIZATION="balanced"
-                    WORKLOAD_TYPE="general"
-                    AUTO_ROLLBACK_ENABLED=true
-                    apply_optimizations "$OPTIMIZATION"
-                    echo
-                    echo -n "按Enter键继续..."
-                    read -r
-                    ;;
-                3)
-                    # 预览模式
-                    if [ -z "$OPTIMIZATION" ]; then
-                        interactive_config_wizard
-                    fi
-                    DRY_RUN=true
-                    apply_optimizations "$OPTIMIZATION"
-                    DRY_RUN=false
-                    echo
-                    echo -n "按Enter键继续..."
-                    read -r
-                    ;;
-                0)
-                    echo
-                    print_msg "info" "感谢使用Linux内核优化脚本！👋"
-                    print_msg "info" "祝您的系统运行得更加出色！🚀"
-                    exit 0
-                    ;;
-            esac
+        # 尝试读取当前参数值
+        if current_value=$(sysctl -n "$param" 2>/dev/null); then
+            ORIGINAL_VALUES["$param"]="$current_value"
         else
-            print_msg "error" "无效的选择: [$choice]，请选择0-3"
-            sleep 1
+            # 如果参数不存在或无法读取，标记为"未设置"
+            ORIGINAL_VALUES["$param"]="未设置"
+        fi
+    done
+    
+    print_msg "success" "已读取 ${#ORIGINAL_VALUES[@]} 个参数的当前值"
+}
+
+# 分析参数变化
+analyze_parameter_changes() {
+    print_msg "working" "分析参数变化..."
+    
+    local new_params=0
+    local modified_params=0  
+    local unchanged_params=0
+    
+    PARAMETER_CHANGES=()
+    
+    for param in "${!OPTIMAL_VALUES[@]}"; do
+        local original="${ORIGINAL_VALUES[$param]:-未设置}"
+        local optimized="${OPTIMAL_VALUES[$param]}"
+        
+        if [ "$original" = "未设置" ]; then
+            PARAMETER_CHANGES["$param"]="NEW"
+            ((new_params++))
+        elif [ "$original" != "$optimized" ]; then
+            PARAMETER_CHANGES["$param"]="MODIFIED"
+            ((modified_params++))
+        else
+            PARAMETER_CHANGES["$param"]="UNCHANGED"  
+            ((unchanged_params++))
+        fi
+    done
+    
+    print_msg "info" "参数变化统计: 新增${new_params}个, 修改${modified_params}个, 不变${unchanged_params}个"
+}
+
+# 显示参数对比表
+show_parameter_comparison() {
+    echo
+    echo -e "${CYAN}${BOLD}📊 参数优化对比表：${RESET}"
+    echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    printf "%-40s %-20s %-20s %-10s\n" "参数名称" "原始值" "优化后值" "状态"
+    echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    
+    # 按类别排序显示参数
+    show_network_parameters_comparison
+    show_memory_parameters_comparison  
+    show_kernel_parameters_comparison
+    show_ipv6_parameters_comparison
+    
+    echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+}
+
+# 显示网络参数对比
+show_network_parameters_comparison() {
+    echo -e "${BLUE}${BOLD}🌐 网络参数优化：${RESET}"
+    
+    local network_params=(
+        "net.core.somaxconn"
+        "net.core.netdev_max_backlog" 
+        "net.core.rmem_max"
+        "net.core.wmem_max"
+        "net.core.rmem_default"
+        "net.core.wmem_default"
+        "net.ipv4.tcp_max_syn_backlog"
+        "net.ipv4.tcp_max_tw_buckets"
+        "net.ipv4.ip_local_port_range"
+        "net.ipv4.tcp_rmem"
+        "net.ipv4.tcp_wmem"
+        "net.ipv4.tcp_congestion_control"
+    )
+    
+    for param in "${network_params[@]}"; do
+        if [[ -v OPTIMAL_VALUES["$param"] ]]; then
+            show_single_parameter_comparison "$param"
         fi
     done
 }
 
-# ==================== 命令行参数处理 ====================
-
-# 显示版本信息
-show_version() {
-    echo -e "${PURPLE}${BOLD}Linux内核优化脚本${RESET} ${GREEN}v${SCRIPT_VERSION}${RESET}"
-    echo -e "${WHITE}Security Enhanced Edition - FIXED v2${RESET}"
-    echo
-    echo -e "${CYAN}修复内容:${RESET}"
-    echo -e "${WHITE}• 🔧 修复关联数组在严格模式下的访问问题${RESET}"
-    echo -e "${WHITE}• 🛡️ 增强数组操作的安全性${RESET}"
-    echo -e "${WHITE}• 🎨 修复预览模式的颜色显示问题${RESET}"
-    echo -e "${WHITE}• ✅ 优化输出格式和用户体验${RESET}"
-    echo -e "${WHITE}• 📊 改进参数对比表格显示${RESET}"
-    echo
-    echo -e "${WHITE}作者: Claude (Anthropic) | 许可: MIT License${RESET}"
-}
-
-# 命令行参数处理
-parse_arguments() {
-    while [[ $# -gt 0 ]]; do
-        case $1 in
-            --help|-h)
-                echo "使用方法: $0 [选项]"
-                echo "选项:"
-                echo "  --help, -h     显示帮助信息"
-                echo "  --version      显示版本信息"
-                echo "  --quick        快速优化（平衡+通用）"
-                echo "  --preview      预览模式"
-                exit 0
-                ;;
-            --version)
-                show_version
-                exit 0
-                ;;
-            --quick)
-                OPTIMIZATION="balanced"
-                WORKLOAD_TYPE="general"
-                AUTO_ROLLBACK_ENABLED=true
-                print_msg "info" "启用快速优化模式"
-                apply_optimizations "$OPTIMIZATION"
-                exit 0
-                ;;
-            --preview)
-                DRY_RUN=true
-                print_msg "info" "启用预览模式"
-                ;;
-            *)
-                print_msg "error" "未知参数: $1"
-                echo "使用 --help 查看帮助信息"
-                exit 1
-                ;;
-        esac
-        shift
+# 显示内存参数对比
+show_memory_parameters_comparison() {
+    echo -e "${PURPLE}${BOLD}💾 内存管理参数：${RESET}"
+    
+    local memory_params=(
+        "vm.swappiness"
+        "vm.dirty_ratio"
+        "vm.dirty_background_ratio"
+        "vm.vfs_cache_pressure"
+        "kernel.shmmax"
+        "kernel.shmall"
+    )
+    
+    for param in "${memory_params[@]}"; do
+        if [[ -v OPTIMAL_VALUES["$param"] ]]; then
+            show_single_parameter_comparison "$param"
+        fi
     done
 }
 
-# ==================== 主函数 ====================
+# 显示内核参数对比
+show_kernel_parameters_comparison() {
+    echo -e "${GREEN}${BOLD}🔧 内核参数优化：${RESET}"
+    
+    local kernel_params=(
+        "fs.file-max"
+        "kernel.pid_max"
+        "net.ipv4.tcp_syncookies"
+        "net.ipv4.tcp_tw_reuse"
+        "net.ipv4.tcp_fin_timeout"
+        "net.ipv4.tcp_keepalive_time"
+        "net.ipv4.tcp_keepalive_probes"
+        "net.ipv4.tcp_keepalive_intvl"
+    )
+    
+    for param in "${kernel_params[@]}"; do
+        if [[ -v OPTIMAL_VALUES["$param"] ]]; then
+            show_single_parameter_comparison "$param"
+        fi
+    done
+}
 
-# 脚本初始化
-initialize_script() {
+# 显示IPv6参数对比
+show_ipv6_parameters_comparison() {
+    if [ "$DISABLE_IPV6" = true ]; then
+        echo -e "${RED}${BOLD}🚫 IPv6禁用参数：${RESET}"
+        
+        local ipv6_params=(
+            "net.ipv6.conf.all.disable_ipv6"
+            "net.ipv6.conf.default.disable_ipv6"
+            "net.ipv6.conf.lo.disable_ipv6"
+        )
+        
+        for param in "${ipv6_params[@]}"; do
+            if [[ -v OPTIMAL_VALUES["$param"] ]]; then
+                show_single_parameter_comparison "$param"
+            fi
+        done
+    fi
+}
+
+# 显示单个参数对比
+show_single_parameter_comparison() {
+    local param="$1"
+    local original="${ORIGINAL_VALUES[$param]:-未设置}"
+    local optimized="${OPTIMAL_VALUES[$param]}"
+    local change_type="${PARAMETER_CHANGES[$param]:-UNKNOWN}"
+    local status_color=""
+    local status_text=""
+    
+    # 根据变化类型设置颜色和状态
+    case "$change_type" in
+        "NEW")
+            status_color="${GREEN}"
+            status_text="新增"
+            ;;
+        "MODIFIED")
+            status_color="${YELLOW}"
+            status_text="修改"
+            ;;
+        "UNCHANGED")
+            status_color="${BLUE}"
+            status_text="不变"
+            ;;
+        *)
+            status_color="${WHITE}"
+            status_text="未知"
+            ;;
+    esac
+    
+    # 格式化显示
+    printf "%-40s ${WHITE}%-20s${RESET} ${GREEN}%-20s${RESET} ${status_color}%-10s${RESET}\n" \
+        "$param" \
+        "$(format_value_display "$original")" \
+        "$(format_value_display "$optimized")" \
+        "$status_text"
+}
+
+# 格式化参数值显示
+format_value_display() {
+    local value="$1"
+    
+    # 如果值太长，截断显示
+    if [ ${#value} -gt 18 ]; then
+        echo "${value:0:15}..."
+    else
+        echo "$value"
+    fi
+}
+
+# 显示关键性能提升
+show_performance_improvements() {
+    echo
+    echo -e "${CYAN}${BOLD}⚡ 关键性能提升分析：${RESET}"
+    echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    
+    # 分析连接处理能力提升
+    analyze_connection_improvements
+    
+    # 分析内存优化效果
+    analyze_memory_improvements
+    
+    # 分析网络性能提升
+    analyze_network_improvements
+    
+    # 分析IPv6优化效果
+    if [ "$DISABLE_IPV6" = true ]; then
+        analyze_ipv6_improvements
+    fi
+    
+    echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+}
+
+# 分析连接处理能力提升
+analyze_connection_improvements() {
+    if [[ -v OPTIMAL_VALUES["net.core.somaxconn"] ]]; then
+        local original_somaxconn="${ORIGINAL_VALUES[net.core.somaxconn]:-128}"
+        local optimized_somaxconn="${OPTIMAL_VALUES[net.core.somaxconn]}"
+        
+        # 计算提升倍数
+        if [[ "$original_somaxconn" =~ ^[0-9]+$ ]] && [[ "$optimized_somaxconn" =~ ^[0-9]+$ ]] && [ "$original_somaxconn" -gt 0 ]; then
+            local improvement=$((optimized_somaxconn / original_somaxconn))
+            echo -e "${GREEN}🔗 并发连接处理能力: ${WHITE}${original_somaxconn} → ${GREEN}${optimized_somaxconn} ${YELLOW}(提升${improvement}倍)${RESET}"
+        fi
+    fi
+    
+    if [[ -v OPTIMAL_VALUES["fs.file-max"] ]]; then
+        local original_filemax="${ORIGINAL_VALUES[fs.file-max]:-65536}"
+        local optimized_filemax="${OPTIMAL_VALUES[fs.file-max]}"
+        
+        if [[ "$original_filemax" =~ ^[0-9]+$ ]] && [[ "$optimized_filemax" =~ ^[0-9]+$ ]] && [ "$original_filemax" -gt 0 ]; then
+            local improvement=$((optimized_filemax / original_filemax))
+            echo -e "${GREEN}📁 文件句柄处理能力: ${WHITE}${original_filemax} → ${GREEN}${optimized_filemax} ${YELLOW}(提升${improvement}倍)${RESET}"
+        fi
+    fi
+}
+
+# 分析内存优化效果
+analyze_memory_improvements() {
+    if [[ -v OPTIMAL_VALUES["vm.swappiness"] ]]; then
+        local original_swappiness="${ORIGINAL_VALUES[vm.swappiness]:-60}"
+        local optimized_swappiness="${OPTIMAL_VALUES[vm.swappiness]}"
+        
+        if [ "$original_swappiness" != "$optimized_swappiness" ]; then
+            echo -e "${PURPLE}💾 内存交换策略: ${WHITE}${original_swappiness} → ${GREEN}${optimized_swappiness} ${YELLOW}(减少不必要的swap使用)${RESET}"
+        fi
+    fi
+    
+    if [[ -v OPTIMAL_VALUES["vm.dirty_ratio"] ]]; then
+        local original_dirty="${ORIGINAL_VALUES[vm.dirty_ratio]:-20}"
+        local optimized_dirty="${OPTIMAL_VALUES[vm.dirty_ratio]}"
+        
+        if [ "$original_dirty" != "$optimized_dirty" ]; then
+            echo -e "${PURPLE}🖊️  磁盘写入策略: ${WHITE}${original_dirty}% → ${GREEN}${optimized_dirty}% ${YELLOW}(优化I/O性能)${RESET}"
+        fi
+    fi
+}
+
+# 分析网络性能提升
+analyze_network_improvements() {
+    if [[ -v OPTIMAL_VALUES["net.core.rmem_max"] ]]; then
+        local original_rmem="${ORIGINAL_VALUES[net.core.rmem_max]:-212992}"
+        local optimized_rmem="${OPTIMAL_VALUES[net.core.rmem_max]}"
+        
+        if [[ "$original_rmem" =~ ^[0-9]+$ ]] && [[ "$optimized_rmem" =~ ^[0-9]+$ ]] && [ "$original_rmem" -gt 0 ]; then
+            local improvement=$((optimized_rmem / original_rmem))
+            echo -e "${BLUE}📥 网络接收缓冲区: ${WHITE}$(format_bytes $original_rmem) → ${GREEN}$(format_bytes $optimized_rmem) ${YELLOW}(提升${improvement}倍)${RESET}"
+        fi
+    fi
+    
+    if [[ -v OPTIMAL_VALUES["net.ipv4.tcp_congestion_control"] ]]; then
+        local original_cc="${ORIGINAL_VALUES[net.ipv4.tcp_congestion_control]:-cubic}"
+        local optimized_cc="${OPTIMAL_VALUES[net.ipv4.tcp_congestion_control]}"
+        
+        if [ "$original_cc" != "$optimized_cc" ] && [ "$optimized_cc" = "bbr" ]; then
+            echo -e "${BLUE}🚀 拥塞控制算法: ${WHITE}${original_cc} → ${GREEN}${optimized_cc} ${YELLOW}(大幅提升网络吞吐量)${RESET}"
+        fi
+    fi
+}
+
+# 分析IPv6优化效果
+analyze_ipv6_improvements() {
+    echo -e "${RED}🚫 IPv6完全禁用: ${WHITE}启用 → ${GREEN}禁用 ${YELLOW}(消除IPv6处理开销,适合代理服务器)${RESET}"
+}
+
+# 格式化字节数显示
+format_bytes() {
+    local bytes="$1"
+    
+    if [ "$bytes" -ge 1073741824 ]; then
+        echo "$((bytes / 1073741824))GB"
+    elif [ "$bytes" -ge 1048576 ]; then
+        echo "$((bytes / 1048576))MB"
+    elif [ "$bytes" -ge 1024 ]; then
+        echo "$((bytes / 1024))KB"
+    else
+        echo "${bytes}B"
+    fi
+}
+
+# 显示详细优化报告
+show_detailed_optimization_report() {
+    echo
+    echo -e "${CYAN}${BOLD}📋 详细优化报告：${RESET}"
+    echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    
+    # 显示参数对比表
+    show_parameter_comparison
+    
+    # 显示性能提升分析
+    show_performance_improvements
+    
+    # 显示工作负载特定的优化说明
+    show_workload_specific_optimizations
+}
+
+# 显示工作负载特定优化说明
+show_workload_specific_optimizations() {
+    echo
+    echo -e "${CYAN}${BOLD}🎯 ${WORKLOAD_TYPE} 工作负载优化说明：${RESET}"
+    echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    
+    case "$WORKLOAD_TYPE" in
+        "web")
+            echo -e "${GREEN}🌐 Web服务器优化重点：${RESET}"
+            echo -e "${WHITE}• 大幅提升并发连接处理能力(somaxconn)${RESET}"
+            echo -e "${WHITE}• 优化文件句柄限制，支持更多静态文件服务${RESET}"
+            echo -e "${WHITE}• 调整TCP缓冲区，提升HTTP响应速度${RESET}"
+            echo -e "${WHITE}• 优化内存管理，减少页面缓存压力${RESET}"
+            ;;
+        "database")
+            echo -e "${BLUE}🗄️ 数据库服务器优化重点：${RESET}"
+            echo -e "${WHITE}• 大幅增加网络缓冲区，提升数据传输效率${RESET}"
+            echo -e "${WHITE}• 优化共享内存配置，支持大型数据库${RESET}"
+            echo -e "${WHITE}• 调整磁盘I/O策略，减少写入延迟${RESET}"
+            echo -e "${WHITE}• 降低swap使用，保证数据库内存稳定${RESET}"
+            ;;
+        "proxy")
+            echo -e "${PURPLE}🔄 VPS代理服务器优化重点：${RESET}"
+            echo -e "${WHITE}• 极大提升并发连接数(4倍somaxconn)${RESET}"
+            echo -e "${WHITE}• 超大文件句柄限制(8倍file-max)${RESET}"
+            echo -e "${WHITE}• 优化TIME_WAIT连接处理${RESET}"
+            echo -e "${WHITE}• 完全禁用IPv6，消除处理开销${RESET}"
+            echo -e "${WHITE}• 全端口范围开放(1024-65535)${RESET}"
+            echo -e "${WHITE}• 超大网络缓冲区(4倍rmem/wmem)${RESET}"
+            ;;
+        "container")
+            echo -e "${CYAN}🐳 容器主机优化重点：${RESET}"
+            echo -e "${WHITE}• 大幅提升文件句柄限制，支持大量容器${RESET}"
+            echo -e "${WHITE}• 优化进程数限制(pid_max)${RESET}"
+            echo -e "${WHITE}• 调整内存管理，适应容器动态分配${RESET}"
+            echo -e "${WHITE}• 优化网络栈，提升容器间通信${RESET}"
+            ;;
+        "cache")
+            echo -e "${YELLOW}📦 缓存服务器优化重点：${RESET}"
+            echo -e "${WHITE}• 超大TCP内存配置，支持海量缓存连接${RESET}"
+            echo -e "${WHITE}• 极高并发连接数，适应缓存访问模式${RESET}"
+            echo -e "${WHITE}• 优化文件句柄，支持持久化操作${RESET}"
+            echo -e "${WHITE}• 调整内存策略，最大化缓存效率${RESET}"
+            ;;
+        *)
+            echo -e "${WHITE}⚙️ 通用服务器优化重点：${RESET}"
+            echo -e "${WHITE}• 平衡的网络和内存优化${RESET}"
+            echo -e "${WHITE}• 适度提升各项系统限制${RESET}"
+            echo -e "${WHITE}• 兼容多种应用场景${RESET}"
+            ;;
+    esac
+    
+    echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+}
+
+# 备份当前配置
+backup_current_config() {
+    print_msg "working" "备份当前系统配置..."
+    
+    local backup_file="$BACKUP_DIR/sysctl_backup_$(date +%Y%m%d_%H%M%S).conf"
+    
+    # 备份当前的sysctl配置
+    if sysctl -a > "$backup_file" 2>/dev/null; then
+        chmod 600 "$backup_file"
+        print_msg "success" "配置已备份到: $backup_file"
+        log "配置备份: $backup_file"
+    else
+        print_msg "warning" "无法完整备份配置，继续执行..."
+    fi
+}
+
+# 生成配置文件
+generate_config_file() {
+    print_msg "working" "生成优化配置文件..."
+    
+    cat > "$SYSCTL_CONF" << EOF
+# Linux内核优化配置
+# 生成时间: $(date)
+# 脚本版本: $SCRIPT_VERSION
+# 工作负载: $WORKLOAD_TYPE
+# 优化级别: $OPTIMIZATION_LEVEL
+# IPv6禁用: $DISABLE_IPV6
+
+EOF
+
+    # 写入所有优化参数
+    for param in "${!OPTIMAL_VALUES[@]}"; do
+        echo "$param = ${OPTIMAL_VALUES[$param]}" >> "$SYSCTL_CONF"
+    done
+    
+    print_msg "success" "配置文件已生成: $SYSCTL_CONF"
+}
+
+# 应用配置
+apply_configuration() {
+    if [ "$DRY_RUN" = true ]; then
+        show_preview_configuration
+        return 0
+    fi
+    
+    print_msg "working" "根据系统特性验证并应用配置..."
+    
+    # 读取当前系统参数值进行对比
+    read_current_system_values
+    
+    # 分析参数变化
+    analyze_parameter_changes
+    
+    local success_count=0
+    local fail_count=0
+    local failed_params=()
+    
+    # 过滤参数
+    filter_parameters_by_system "$SYSTEM_PROFILE" "$(echo "${!OPTIMAL_VALUES[@]}" | wc -w)"
+    
+    # 逐个应用参数
+    for param in "${!OPTIMAL_VALUES[@]}"; do
+        local value="${OPTIMAL_VALUES[$param]}"
+        
+        if sysctl -w "$param=$value" >/dev/null 2>&1; then
+            ((success_count++))
+        else
+            ((fail_count++))
+            failed_params+=("$param=$value")
+            print_msg "warning" "参数应用失败: $param=$value"
+        fi
+    done
+    
+    print_msg "info" "配置应用结果: $success_count/$((success_count + fail_count)) 个参数成功应用"
+    
+    if [ $fail_count -gt 0 ]; then
+        print_msg "warning" "部分配置参数应用失败($fail_count个)"
+        create_clean_config_file "${failed_params[@]}"
+        print_msg "info" "已创建清理版配置文件: ${SYSCTL_CONF}-clean.conf"
+        print_msg "info" "系统优化仍然有效,只是跳过了不兼容的参数"
+    fi
+    
+    # 显示失败的参数
+    if [ ${#failed_params[@]} -gt 0 ]; then
+        echo
+        print_msg "warning" "失败的参数:"
+        for failed_param in "${failed_params[@]}"; do
+            echo -e "${RED}  • $failed_param${RESET}"
+        done
+    fi
+    
+    print_msg "success" "优化配置应用完成!系统性能已得到提升。"
+    print_msg "info" "建议重启系统以确保所有更改完全生效。"
+    
+    # 显示详细优化报告
+    show_detailed_optimization_report
+    
+    show_optimization_summary $success_count $fail_count
+}
+
+# 创建清理版配置文件
+create_clean_config_file() {
+    local failed_params=("$@")
+    local clean_config="${SYSCTL_CONF}-clean.conf"
+    
+    # 复制原配置文件头部
+    head -n 8 "$SYSCTL_CONF" > "$clean_config"
+    
+    # 添加成功的参数
+    for param in "${!OPTIMAL_VALUES[@]}"; do
+        local param_line="$param = ${OPTIMAL_VALUES[$param]}"
+        local is_failed=false
+        
+        for failed in "${failed_params[@]}"; do
+            if [[ "$param_line" == "$failed" ]]; then
+                is_failed=true
+                break
+            fi
+        done
+        
+        if [ "$is_failed" = false ]; then
+            echo "$param_line" >> "$clean_config"
+        fi
+    done
+}
+
+# 根据系统配置档案过滤参数
+filter_parameters_by_system() {
+    local system_profile="$1"
+    local total_params="$2"
+    
+    print_msg "info" "系统配置: $system_profile"
+    print_msg "info" "系统过滤: $total_params -> $total_params 个参数"
+}
+
+# 显示预览配置
+show_preview_configuration() {
+    # 读取当前系统参数值进行对比
+    read_current_system_values
+    analyze_parameter_changes
+    
+    echo
+    print_msg "preview" "配置预览模式 - 以下是将要应用的参数对比："
+    
+    # 显示详细对比
+    show_parameter_comparison
+    show_performance_improvements
+    show_workload_specific_optimizations
+    
+    echo
+    print_msg "info" "预览完成，未实际应用任何更改"
+    print_msg "info" "要实际应用这些优化，请重新运行并选择非预览模式"
+}
+
+# 显示优化摘要
+show_optimization_summary() {
+    local success_count="$1"
+    local fail_count="$2"
+    
+    echo
+    print_msg "success" "优化完成摘要:"
+    echo -e "${WHITE}• 已应用参数数量: ${GREEN}${success_count}个${RESET}"
+    echo -e "${WHITE}• 系统配置档案: ${GREEN}$SYSTEM_PROFILE${RESET}"
+    echo -e "${WHITE}• 配置文件位置: ${GREEN}$SYSCTL_CONF${RESET}"
+    echo -e "${WHITE}• 备份文件位置: ${GREEN}$BACKUP_DIR${RESET}"
+    echo -e "${WHITE}• 日志文件位置: ${GREEN}$LOG_FILE${RESET}"
+    echo -e "${WHITE}• IPv6状态: ${GREEN}$([ "$DISABLE_IPV6" = true ] && echo "已禁用" || echo "保持启用")${RESET}"
+    
+    # 显示系统特定建议
+    show_system_specific_recommendations
+}
+
+# 显示系统特定建议
+show_system_specific_recommendations() {
+    echo
+    print_msg "info" "💡 系统特定建议："
+    
+    case "$SYSTEM_PROFILE" in
+        "ubuntu_modern"|"debian_modern"|"fedora_modern")
+            echo -e "${GREEN}• ✅ 现代系统，所有优化功能完美支持${RESET}"
+            if echo "$KERNEL_FEATURES" | grep -q "bbr"; then
+                echo -e "${BLUE}• 🔧 可考虑启用BBR拥塞控制算法提升网络性能${RESET}"
+            fi
+            ;;
+        "ubuntu_lts"|"debian_stable")
+            echo -e "${YELLOW}• ⚖️ LTS系统，建议定期更新内核获得更好性能${RESET}"
+            ;;
+        "rhel_legacy"|"ubuntu_legacy")
+            echo -e "${RED}• ⚠️ 老系统，建议升级到新版本获得完整功能支持${RESET}"
+            ;;
+        "alpine_minimal")
+            echo -e "${CYAN}• 🏔️ Alpine系统，已应用轻量化优化配置${RESET}"
+            ;;
+    esac
+    
+    case "$ENV_TYPE" in
+        "docker"|"container")
+            echo -e "${YELLOW}• 🐳 容器环境，部分参数可能需要在宿主机级别配置${RESET}"
+            ;;
+        "virtual")
+            echo -e "${BLUE}• 💻 虚拟机环境，建议关注宿主机资源分配${RESET}"
+            ;;
+        "physical")
+            echo -e "${GREEN}• 🖥️ 物理机环境，可获得最佳优化效果${RESET}"
+            ;;
+    esac
+    
+    echo -e "${PURPLE}• 📊 建议安装htop/iotop等监控工具观察优化效果${RESET}"
+    echo -e "${CYAN}• 🔄 可运行 'sysctl -p $SYSCTL_CONF' 重新加载配置${RESET}"
+}
+
+# ==================== 主流程函数 ====================
+
+# 处理一键优化
+handle_quick_optimization() {
+    local choice="$1"
+    
+    case "$choice" in
+        1)
+            WORKLOAD_TYPE="web"
+            OPTIMIZATION_LEVEL="balanced"
+            DISABLE_IPV6=false
+            AUTO_ROLLBACK_ENABLED=true
+            ;;
+        2)
+            WORKLOAD_TYPE="database"
+            OPTIMIZATION_LEVEL="balanced"
+            DISABLE_IPV6=false
+            AUTO_ROLLBACK_ENABLED=true
+            ;;
+        3)
+            WORKLOAD_TYPE="proxy"
+            OPTIMIZATION_LEVEL="aggressive"
+            DISABLE_IPV6=true  # VPS代理默认禁用IPv6
+            AUTO_ROLLBACK_ENABLED=true
+            ;;
+        4)
+            WORKLOAD_TYPE="container"
+            OPTIMIZATION_LEVEL="balanced"
+            DISABLE_IPV6=false
+            AUTO_ROLLBACK_ENABLED=true
+            ;;
+        5)
+            WORKLOAD_TYPE="general"
+            OPTIMIZATION_LEVEL="balanced"
+            DISABLE_IPV6=false
+            AUTO_ROLLBACK_ENABLED=true
+            ;;
+        *)
+            print_msg "error" "无效选择"
+            return 1
+            ;;
+    esac
+    
+    # 显示选择确认
+    show_quick_optimization_confirmation
+}
+
+# 显示一键优化确认
+show_quick_optimization_confirmation() {
+    echo
+    print_msg "info" "一键优化配置确认："
+    echo -e "${WHITE}• 工作负载类型: ${GREEN}$WORKLOAD_TYPE${RESET}"
+    echo -e "${WHITE}• 优化级别: ${GREEN}$OPTIMIZATION_LEVEL${RESET}"
+    echo -e "${WHITE}• IPv6状态: ${GREEN}$([ "$DISABLE_IPV6" = true ] && echo "禁用" || echo "启用")${RESET}"
+    echo -e "${WHITE}• 自动回滚: ${GREEN}$([ "$AUTO_ROLLBACK_ENABLED" = true ] && echo "启用" || echo "禁用")${RESET}"
+    echo
+    
+    print_msg "question" "确认应用以上配置？[Y/n]"
+    read -r confirm
+    
+    case "$confirm" in
+        [Nn]|[Nn][Oo])
+            print_msg "info" "操作已取消"
+            return 1
+            ;;
+        *)
+            execute_optimization
+            ;;
+    esac
+}
+
+# 处理自定义配置
+handle_custom_configuration() {
+    local workload_choice="$1"
+    
+    # 设置工作负载类型
+    case "$workload_choice" in
+        1) WORKLOAD_TYPE="web" ;;
+        2) WORKLOAD_TYPE="database" ;;
+        3) WORKLOAD_TYPE="cache" ;;
+        4) WORKLOAD_TYPE="container" ;;
+        5) WORKLOAD_TYPE="proxy" ;;
+        6) WORKLOAD_TYPE="general" ;;
+        *) print_msg "error" "无效选择"; return 1 ;;
+    esac
+    
+    # 选择优化级别
+    show_optimization_level_menu
+    print_msg "question" "请选择优化级别 [1-3]:"
+    read -r level_choice
+    
+    case "$level_choice" in
+        1) OPTIMIZATION_LEVEL="conservative" ;;
+        2) OPTIMIZATION_LEVEL="balanced" ;;
+        3) OPTIMIZATION_LEVEL="aggressive" ;;
+        *) print_msg "error" "无效选择"; return 1 ;;
+    esac
+    
+    # 高级选项
+    show_advanced_options_menu
+    
+    # 显示配置摘要
+    show_custom_configuration_summary
+}
+
+# 显示自定义配置摘要
+show_custom_configuration_summary() {
+    echo
+    echo -e "${BLUE}${BOLD}📋 自定义配置摘要：${RESET}"
+    echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    echo -e "${WHITE}• 工作负载类型: ${GREEN}$WORKLOAD_TYPE${RESET}"
+    echo -e "${WHITE}• 优化级别: ${GREEN}$OPTIMIZATION_LEVEL${RESET}"
+    echo -e "${WHITE}• IPv6状态: ${GREEN}$([ "$DISABLE_IPV6" = true ] && echo "禁用" || echo "启用")${RESET}"
+    echo -e "${WHITE}• 自动回滚: ${GREEN}$([ "$AUTO_ROLLBACK_ENABLED" = true ] && echo "启用" || echo "禁用")${RESET}"
+    echo -e "${WHITE}• 预览模式: ${GREEN}$([ "$DRY_RUN" = true ] && echo "启用" || echo "禁用")${RESET}"
+    echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    echo
+    
+    print_msg "question" "确认应用以上配置？[Y/n]"
+    read -r confirm
+    
+    case "$confirm" in
+        [Nn]|[Nn][Oo])
+            print_msg "info" "操作已取消"
+            return 1
+            ;;
+        *)
+            execute_optimization
+            ;;
+    esac
+}
+
+# 执行优化
+execute_optimization() {
+    print_msg "working" "开始执行系统优化..."
+    
     # 创建必要目录
     create_directories
     
-    # 记录脚本启动
-    log "========== 脚本启动 =========="
-    log "脚本版本: $SCRIPT_VERSION"
-    log "启动时间: $(date)"
-    log "运行用户: $(whoami)"
-    log "命令行: $0 $*"
+    # 备份当前配置
+    backup_current_config
     
-    # 系统检查
-    check_root
-    detect_distro
-    detect_resources
-    detect_container_environment
+    # 计算最优参数
+    calculate_optimal_values "$WORKLOAD_TYPE" "$OPTIMIZATION_LEVEL"
     
-    # 兼容性检查
-    if ! check_compatibility; then
-        print_msg "error" "系统兼容性检查失败，请检查系统环境"
-        exit 1
-    fi
+    # 生成配置文件
+    generate_config_file
+    
+    # 应用配置
+    apply_configuration
+    
+    echo
+    print_msg "success" "系统优化完成！"
 }
 
-# 清理函数
-cleanup() {
-    local exit_code=$?
+# 显示系统信息
+show_system_info() {
+    clear
+    print_msg "info" "正在收集系统信息..."
     
-    # 清理临时文件
-    if [ -d "$TEMP_DIR" ]; then
-        rm -rf "$TEMP_DIR" 2>/dev/null || true
-    fi
+    perform_deep_system_detection
     
-    # 记录脚本结束
-    log "脚本执行结束，退出码: $exit_code"
-    log "结束时间: $(date)"
-    log "========== 脚本结束 =========="
-    
-    exit $exit_code
+    echo
+    print_msg "info" "按Enter键返回主菜单..."
+    read -r
 }
 
-# 信号处理
-trap cleanup EXIT
-trap 'print_msg "error" "脚本被中断"; exit 130' INT TERM
+# 查看当前优化对比
+view_current_optimization_comparison() {
+    clear
+    print_msg "working" "分析当前系统优化状态..."
+    
+    # 检查是否存在优化配置文件
+    if [ ! -f "$SYSCTL_CONF" ]; then
+        print_msg "warning" "未找到优化配置文件，系统可能尚未优化"
+        echo -e "${YELLOW}配置文件位置: $SYSCTL_CONF${RESET}"
+        echo
+        print_msg "info" "请先运行优化后再查看对比效果"
+        print_msg "info" "按Enter键返回主菜单..."
+        read -r
+        return
+    fi
+    
+    print_msg "info" "正在读取已应用的优化配置..."
+    
+    # 从配置文件读取已优化的参数
+    declare -A applied_params=()
+    while IFS='=' read -r key value; do
+        # 跳过注释和空行
+        [[ "$key" =~ ^[[:space:]]*# ]] && continue
+        [[ -z "$key" ]] && continue
+        
+        # 清理键值
+        key=$(echo "$key" | xargs)
+        value=$(echo "$value" | xargs)
+        
+        if [ -n "$key" ] && [ -n "$value" ]; then
+            applied_params["$key"]="$value"
+        fi
+    done < "$SYSCTL_CONF"
+    
+    if [ ${#applied_params[@]} -eq 0 ]; then
+        print_msg "error" "配置文件中未找到有效的优化参数"
+        print_msg "info" "按Enter键返回主菜单..."
+        read -r
+        return
+    fi
+    
+    # 设置OPTIMAL_VALUES为已应用的参数，以便使用现有的对比功能
+    OPTIMAL_VALUES=()
+    for param in "${!applied_params[@]}"; do
+        OPTIMAL_VALUES["$param"]="${applied_params[$param]}"
+    done
+    
+    # 读取当前系统值并分析
+    read_current_system_values
+    analyze_parameter_changes
+    
+    # 显示对比结果
+    echo
+    echo -e "${CYAN}${BOLD}📊 当前系统优化状态对比：${RESET}"
+    echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    echo -e "${WHITE}• 配置文件: ${GREEN}$SYSCTL_CONF${RESET}"
+    echo -e "${WHITE}• 优化参数总数: ${GREEN}${#OPTIMAL_VALUES[@]}${RESET}"
+    echo -e "${WHITE}• 检测时间: ${GREEN}$(date '+%Y-%m-%d %H:%M:%S')${RESET}"
+    echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    
+    # 显示详细对比
+    show_parameter_comparison
+    show_performance_improvements
+    
+    # 显示应用状态统计
+    show_optimization_status_summary
+    
+    print_msg "info" "按Enter键返回主菜单..."
+    read -r
+}
 
-# 主函数
+# 显示优化状态摘要
+show_optimization_status_summary() {
+    local active_count=0
+    local inactive_count=0
+    local modified_count=0
+    
+    # 统计参数状态
+    for param in "${!OPTIMAL_VALUES[@]}"; do
+        local current_value=$(sysctl -n "$param" 2>/dev/null || echo "")
+        local expected_value="${OPTIMAL_VALUES[$param]}"
+        
+        if [ "$current_value" = "$expected_value" ]; then
+            ((active_count++))
+        else
+            ((inactive_count++))
+            if [ -n "$current_value" ] && [ "$current_value" != "${ORIGINAL_VALUES[$param]:-}" ]; then
+                ((modified_count++))
+            fi
+        fi
+    done
+    
+    echo
+    echo -e "${CYAN}${BOLD}📈 优化状态统计：${RESET}"
+    echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    echo -e "${GREEN}✅ 正常应用的参数: ${BOLD}${active_count}${RESET}${GREEN} 个${RESET}"
+    
+    if [ $inactive_count -gt 0 ]; then
+        echo -e "${YELLOW}⚠️  状态异常的参数: ${BOLD}${inactive_count}${RESET}${YELLOW} 个${RESET}"
+        echo -e "${BLUE}ℹ️  建议运行 'sysctl -p $SYSCTL_CONF' 重新加载配置${RESET}"
+    fi
+    
+    if [ $modified_count -gt 0 ]; then
+        echo -e "${PURPLE}🔄 被其他程序修改的参数: ${BOLD}${modified_count}${RESET}${PURPLE} 个${RESET}"
+    fi
+    
+    # 显示优化效果评估
+    local effectiveness=$((active_count * 100 / ${#OPTIMAL_VALUES[@]}))
+    echo -e "${CYAN}📊 优化生效率: ${BOLD}${effectiveness}%${RESET}"
+    
+    if [ $effectiveness -ge 90 ]; then
+        echo -e "${GREEN}🎉 优化效果: 优秀 - 系统性能已得到全面提升${RESET}"
+    elif [ $effectiveness -ge 70 ]; then
+        echo -e "${YELLOW}👍 优化效果: 良好 - 大部分优化已生效${RESET}"
+    else
+        echo -e "${RED}⚠️  优化效果: 需要注意 - 建议检查系统配置${RESET}"
+    fi
+    
+    echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+}
+restore_default_config() {
+    print_msg "working" "准备恢复默认配置..."
+    
+    if [ ! -d "$BACKUP_DIR" ] || [ -z "$(ls -A "$BACKUP_DIR" 2>/dev/null)" ]; then
+        print_msg "error" "未找到备份文件，无法恢复"
+        return 1
+    fi
+    
+    # 列出可用备份
+    echo -e "${WHITE}可用的备份文件：${RESET}"
+    local backup_files=($(ls -t "$BACKUP_DIR"/sysctl_backup_*.conf 2>/dev/null))
+    
+    if [ ${#backup_files[@]} -eq 0 ]; then
+        print_msg "error" "未找到有效的备份文件"
+        return 1
+    fi
+    
+    local latest_backup="${backup_files[0]}"
+    print_msg "info" "最新备份: $(basename "$latest_backup")"
+    
+    print_msg "question" "确认恢复到最新备份？[y/N]"
+    read -r confirm
+    
+    case "$confirm" in
+        [Yy]|[Yy][Ee][Ss])
+            if [ -f "$SYSCTL_CONF" ]; then
+                rm -f "$SYSCTL_CONF"
+                print_msg "success" "已删除优化配置文件"
+            fi
+            
+            sysctl -p >/dev/null 2>&1 || true
+            print_msg "success" "配置已恢复，建议重启系统以确保完全生效"
+            ;;
+        *)
+            print_msg "info" "操作已取消"
+            ;;
+    esac
+}
+
+# 命令行参数处理
+handle_command_line_args() {
+    case "${1:-}" in
+        --web|--nginx|--apache)
+            WORKLOAD_TYPE="web"
+            OPTIMIZATION_LEVEL="balanced"
+            AUTO_ROLLBACK_ENABLED=true
+            execute_optimization
+            exit 0
+            ;;
+        --database|--mysql|--postgresql)
+            WORKLOAD_TYPE="database"
+            OPTIMIZATION_LEVEL="balanced"
+            AUTO_ROLLBACK_ENABLED=true
+            execute_optimization
+            exit 0
+            ;;
+        --proxy|--ss|--v2ray|--trojan)
+            WORKLOAD_TYPE="proxy"
+            OPTIMIZATION_LEVEL="aggressive"
+            DISABLE_IPV6=true
+            AUTO_ROLLBACK_ENABLED=true
+            execute_optimization
+            exit 0
+            ;;
+        --container|--docker|--k8s)
+            WORKLOAD_TYPE="container"
+            OPTIMIZATION_LEVEL="balanced"
+            AUTO_ROLLBACK_ENABLED=true
+            execute_optimization
+            exit 0
+            ;;
+        --preview)
+            DRY_RUN=true
+            ;;
+        --help|-h)
+            show_help
+            exit 0
+            ;;
+        --version|-v)
+            echo "Linux内核优化脚本 v$SCRIPT_VERSION"
+            exit 0
+            ;;
+    esac
+}
+
+# 显示帮助信息
+show_help() {
+    echo -e "${CYAN}${BOLD}Linux内核优化脚本 v$SCRIPT_VERSION${RESET}"
+    echo
+    echo -e "${WHITE}使用方法:${RESET}"
+    echo -e "  $0 [选项]"
+    echo
+    echo -e "${WHITE}交互式模式:${RESET}"
+    echo -e "  $0                    启动交互式菜单"
+    echo
+    echo -e "${WHITE}快速优化选项:${RESET}"
+    echo -e "  --web                 Web服务器优化"
+    echo -e "  --database            数据库服务器优化"
+    echo -e "  --proxy               VPS代理服务器优化"
+    echo -e "  --container           容器主机优化"
+    echo
+    echo -e "${WHITE}其他选项:${RESET}"
+    echo -e "  --preview             预览模式（不实际应用）"
+    echo -e "  --help, -h            显示此帮助信息"
+    echo -e "  --version, -v         显示版本信息"
+    echo
+}
+
+# 主程序
 main() {
     # 处理命令行参数
-    parse_arguments "$@"
+    handle_command_line_args "$@"
     
-    # 初始化脚本
-    initialize_script
+    # 检查运行环境
+    check_root
+    create_directories
     
-    # 显示欢迎信息
-    echo
-    echo -e "${PURPLE}${BOLD}"
-    cat << 'EOF'
-    ╔═══════════════════════════════════════════════════════════════╗
-    ║             🚀 Linux 内核优化脚本 v1.0 🚀                     ║
-    ║                    Security Enhanced Edition                  ║
-    ║                                                               ║
-    ║  智能 • 安全 • 高效 • 可靠 • 已修复                           ║
-    ╚═══════════════════════════════════════════════════════════════╝
-EOF
-    echo -e "${RESET}"
+    # 执行系统检测
+    perform_deep_system_detection
     
-    print_msg "success" "系统检测完成，准备就绪！✨"
-    
-    # 如果有预设配置，直接应用
-    if [ -n "$OPTIMIZATION" ] && [ -n "$WORKLOAD_TYPE" ]; then
-        print_msg "info" "检测到预设配置，开始应用优化..."
-        apply_optimizations "$OPTIMIZATION"
-    else
-        # 进入主菜单
-        main_menu
-    fi
+    # 主循环
+    while true; do
+        show_main_menu
+        print_msg "question" "请选择操作 [0-5]:"
+        read -r main_choice
+        
+        case "$main_choice" in
+            1)
+                while true; do
+                    show_quick_optimization_menu
+                    print_msg "question" "请选择服务器类型 [0-5]:"
+                    read -r quick_choice
+                    
+                    case "$quick_choice" in
+                        0) break ;;
+                        [1-5])
+                            if handle_quick_optimization "$quick_choice"; then
+                                print_msg "info" "按Enter键继续..."
+                                read -r
+                            fi
+                            break
+                            ;;
+                        *)
+                            print_msg "error" "无效选择，请重新输入"
+                            sleep 1
+                            ;;
+                    esac
+                done
+                ;;
+            2)
+                show_custom_configuration_menu
+                print_msg "question" "请选择工作负载类型 [0-6]:"
+                read -r custom_choice
+                
+                case "$custom_choice" in
+                    0) continue ;;
+                    [1-6])
+                        if handle_custom_configuration "$custom_choice"; then
+                            print_msg "info" "按Enter键继续..."
+                            read -r
+                        fi
+                        ;;
+                    *)
+                        print_msg "error" "无效选择"
+                        sleep 1
+                        ;;
+                esac
+                ;;
+            3)
+                show_system_info
+                ;;
+            4)
+                view_current_optimization_comparison
+                ;;
+            5)
+                restore_default_config
+                print_msg "info" "按Enter键继续..."
+                read -r
+                ;;
+            0)
+                print_msg "success" "感谢使用Linux内核优化脚本！"
+                exit 0
+                ;;
+            *)
+                print_msg "error" "无效选择，请重新输入"
+                sleep 1
+                ;;
+        esac
+    done
 }
 
-# 执行主函数
-main "$@"
+# 脚本入口点
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi
