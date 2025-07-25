@@ -1,7 +1,7 @@
 #!/bin/bash
 # Linux 内核优化脚本 v2.0
 # By: BuBuXSY
-# Version: 2.2-enhanced
+# Version: 2.0
 # 2025-07-25
 # License: MIT
 
