@@ -1,10 +1,9 @@
 #!/bin/bash
-# 证书管理终极脚本，支持多CA，DNS API/手动验证，ECC证书，自动部署并重载nginx
+# SSL证书管理工具，支持多CA，DNS API/手动验证，ECC证书，自动部署并重载nginx
 # 支持多CA，DNS API/手动验证，ECC证书，自动部署并重载nginx
 # By: BuBuXSY
-# Version: 2025-07-19
+# Version: 2025-09-25
 # License: MIT
-
 
 set -euo pipefail  # 严格模式
 
@@ -13,18 +12,16 @@ readonly RED="\e[31m"
 readonly GREEN="\e[32m"
 readonly YELLOW="\e[33m"
 readonly BLUE="\e[34m"
-readonly MAGENTA="\e[35m"
 readonly CYAN="\e[36m"
 readonly BOLD="\e[1m"
 readonly RESET="\e[0m"
 
-# 设置表情
-readonly SUCCESS="✔️"
-readonly ERROR="❌"
-readonly INFO="ℹ️"
-readonly WARNING="⚠️"
-readonly THINKING="🤔"
-readonly LOADING="⏳"
+# 设置表情符号（兼容性更好的版本）
+readonly SUCCESS="[✓]"
+readonly ERROR="[✗]"
+readonly INFO="[i]"
+readonly WARNING="[!]"
+readonly LOADING="[...]"
 
 # 全局变量
 CA_URL=""
@@ -32,8 +29,29 @@ DOMAIN=""
 OPERATION=""
 DNS_METHOD=""
 DNS_PROVIDER=""
-CERT_DIR="/etc/nginx/cert_file"
-LOG_FILE="/var/log/acme-cert-tool.log"
+CERT_DIR="/etc/nginx/ssl"
+LOG_FILE=""
+
+# 初始化日志文件路径
+init_log_file() {
+    if [[ $EUID -eq 0 ]]; then
+        LOG_FILE="/var/log/acme-cert-tool.log"
+        # 确保日志目录存在
+        mkdir -p "$(dirname "$LOG_FILE")"
+    else
+        LOG_FILE="$HOME/acme-cert-tool.log"
+        # 如果家目录不可写，使用临时目录
+        if [[ ! -w "$HOME" ]]; then
+            LOG_FILE="/tmp/acme-cert-tool-$(id -u).log"
+        fi
+    fi
+    
+    # 创建日志文件
+    touch "$LOG_FILE" 2>/dev/null || {
+        LOG_FILE="/tmp/acme-cert-tool-$(date +%s).log"
+        touch "$LOG_FILE"
+    }
+}
 
 # 日志函数
 log() {
@@ -41,7 +59,9 @@ log() {
     shift
     local message="$*"
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    echo "[$timestamp] [$level] $message" >> "$LOG_FILE"
+    
+    # 写入日志文件
+    echo "[$timestamp] [$level] $message" >> "$LOG_FILE" 2>/dev/null || true
     
     case "$level" in
         "ERROR")
@@ -62,48 +82,125 @@ log() {
 # 错误处理函数
 error_exit() {
     log "ERROR" "$1"
+    echo ""
+    log "INFO" "日志文件: $LOG_FILE"
     exit 1
 }
 
 # 显示欢迎信息
 welcome_message() {
     clear
-    echo -e "${CYAN}${BOLD}╔══════════════════════════════════════════════════════════╗${RESET}"
-    echo -e "${CYAN}${BOLD}║          ACME 证书申请自动化工具 - 优化版                  ║${RESET}"
-    echo -e "${CYAN}${BOLD}║                  支持多CA和自动化部署                     ║${RESET}"
-    echo -e "${CYAN}${BOLD}╚══════════════════════════════════════════════════════════╝${RESET}"
+    echo -e "${CYAN}${BOLD}============================================================${RESET}"
+    echo -e "${CYAN}${BOLD}          ACME SSL证书自动化管理工具                        ${RESET}"
+    echo -e "${CYAN}${BOLD}          支持多CA和自动化部署                              ${RESET}"
+    echo -e "${CYAN}${BOLD}============================================================${RESET}"
     echo ""
     log "INFO" "工具启动，支持 Let's Encrypt, Buypass, ZeroSSL"
+    echo ""
+}
+
+# 检测操作系统
+detect_os() {
+    if [[ -f /etc/os-release ]]; then
+        . /etc/os-release
+        OS=$NAME
+        OS_VERSION=$VERSION_ID
+    elif [[ -f /etc/redhat-release ]]; then
+        OS=$(cat /etc/redhat-release | cut -d' ' -f1)
+    else
+        OS=$(uname -s)
+    fi
+    log "INFO" "检测到操作系统: $OS"
 }
 
 # 检查root权限
 check_root() {
     if [[ $EUID -ne 0 ]]; then
-        error_exit "此脚本需要root权限运行，请使用 sudo 或切换到root用户"
+        echo -e "${RED}${ERROR} 此脚本需要root权限运行${RESET}"
+        echo -e "${YELLOW}请使用以下命令之一：${RESET}"
+        echo -e "  ${CYAN}sudo $0${RESET}"
+        echo -e "  ${CYAN}su - root -c '$0'${RESET}"
+        exit 1
     fi
+    
+    log "SUCCESS" "Root权限检查通过"
+}
+
+# 安装包管理器检测
+get_package_manager() {
+    if command -v apt-get >/dev/null 2>&1; then
+        echo "apt"
+    elif command -v yum >/dev/null 2>&1; then
+        echo "yum"
+    elif command -v dnf >/dev/null 2>&1; then
+        echo "dnf"
+    elif command -v pacman >/dev/null 2>&1; then
+        echo "pacman"
+    else
+        echo "unknown"
+    fi
+}
+
+# 安装依赖
+install_dependencies() {
+    local pkg_manager=$(get_package_manager)
+    local packages=""
+    
+    case $pkg_manager in
+        "apt")
+            apt-get update -y
+            packages="curl wget dnsutils openssl cron"
+            apt-get install -y $packages
+            ;;
+        "yum"|"dnf")
+            packages="curl wget bind-utils openssl cronie"
+            $pkg_manager install -y $packages
+            systemctl enable crond
+            systemctl start crond
+            ;;
+        "pacman")
+            packages="curl wget bind-tools openssl cronie"
+            pacman -Sy --noconfirm $packages
+            systemctl enable cronie
+            systemctl start cronie
+            ;;
+        *)
+            log "WARN" "未知的包管理器，请手动安装: curl, wget, dig, openssl"
+            ;;
+    esac
 }
 
 # 检查系统依赖
 check_dependencies() {
-    local deps=("curl" "wget" "dig" "openssl")
+    local deps=("curl" "wget" "openssl")
     local missing=()
     
+    # 检查dig命令（不同系统命令名可能不同）
+    if ! command -v dig >/dev/null 2>&1 && ! command -v nslookup >/dev/null 2>&1; then
+        missing+=("dnsutils")
+    fi
+    
     for dep in "${deps[@]}"; do
-        if ! command -v "$dep" &> /dev/null; then
+        if ! command -v "$dep" >/dev/null 2>&1; then
             missing+=("$dep")
         fi
     done
     
     if [[ ${#missing[@]} -gt 0 ]]; then
         log "WARN" "缺少依赖: ${missing[*]}"
-        read -p "是否自动安装缺少的依赖？[y/N]: " install_deps
+        echo -e "${YELLOW}是否自动安装缺少的依赖？[Y/n]:${RESET} "
+        read -r install_deps
+        install_deps=${install_deps:-Y}
+        
         if [[ "$install_deps" =~ ^[Yy]$ ]]; then
-            log "INFO" "安装依赖包..."
-            apt update && apt install -y "${missing[@]}" || error_exit "依赖安装失败"
+            log "INFO" "正在安装依赖包..."
+            install_dependencies
             log "SUCCESS" "依赖安装完成"
         else
             error_exit "缺少必要依赖，无法继续"
         fi
+    else
+        log "SUCCESS" "系统依赖检查通过"
     fi
 }
 
@@ -125,14 +222,15 @@ show_progress() {
 
 # 选择 CA 供应商
 select_ca() {
-    echo -e "${GREEN}${BOLD}选择 CA 供应商：${RESET}"
+    echo -e "${GREEN}${BOLD}请选择 CA 供应商：${RESET}"
     echo -e "  ${BLUE}1)${RESET} Let's Encrypt (免费，推荐)"
     echo -e "  ${BLUE}2)${RESET} Buypass (免费，90天)"
     echo -e "  ${BLUE}3)${RESET} ZeroSSL (免费，90天)"
     echo ""
     
     while true; do
-        read -p "请选择 [1-3] (默认: 1): " ca_choice
+        echo -n "请选择 [1-3] (默认: 1): "
+        read -r ca_choice
         ca_choice=${ca_choice:-1}
         
         case $ca_choice in
@@ -161,22 +259,47 @@ select_ca() {
 # 验证域名格式
 validate_domain() {
     local domain="$1"
-    # 简单的域名格式验证
-    if [[ ! "$domain" =~ ^(\*\.)?[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$ ]]; then
-        return 1
+    # 改进的域名格式验证
+    if [[ "$domain" =~ ^(\*\.)?[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$ ]]; then
+        # 检查域名长度
+        if [[ ${#domain} -le 253 ]]; then
+            return 0
+        fi
     fi
-    return 0
+    return 1
+}
+
+# 获取域名输入
+get_domain_input() {
+    while true; do
+        echo -n "请输入域名 (例如: example.com 或 *.example.com): "
+        read -r domain_input
+        
+        if [[ -z "$domain_input" ]]; then
+            log "WARN" "域名不能为空"
+            continue
+        fi
+        
+        if validate_domain "$domain_input"; then
+            DOMAIN="$domain_input"
+            log "SUCCESS" "域名格式验证通过: $DOMAIN"
+            break
+        else
+            log "WARN" "域名格式不正确，请重新输入"
+        fi
+    done
 }
 
 # 选择DNS验证方式
 select_dns_method() {
-    echo -e "${GREEN}${BOLD}选择 DNS 验证方式：${RESET}"
+    echo -e "${GREEN}${BOLD}请选择 DNS 验证方式：${RESET}"
     echo -e "  ${BLUE}1)${RESET} 手动添加 DNS 记录"
     echo -e "  ${BLUE}2)${RESET} 使用 DNS API 自动验证"
     echo ""
     
     while true; do
-        read -p "请选择 [1-2] (默认: 1): " dns_method_choice
+        echo -n "请选择 [1-2] (默认: 1): "
+        read -r dns_method_choice
         dns_method_choice=${dns_method_choice:-1}
         
         case $dns_method_choice in
@@ -199,7 +322,7 @@ select_dns_method() {
 
 # 选择DNS服务商
 select_dns_provider() {
-    echo -e "${GREEN}${BOLD}选择 DNS 服务商：${RESET}"
+    echo -e "${GREEN}${BOLD}请选择 DNS 服务商：${RESET}"
     echo -e "  ${BLUE}1)${RESET} 阿里云 DNS (dns_ali)"
     echo -e "  ${BLUE}2)${RESET} 腾讯云 DNS (dns_tencent)" 
     echo -e "  ${BLUE}3)${RESET} Cloudflare (dns_cf)"
@@ -209,7 +332,8 @@ select_dns_provider() {
     echo ""
     
     while true; do
-        read -p "请选择 [1-6]: " dns_provider_choice
+        echo -n "请选择 [1-6]: "
+        read -r dns_provider_choice
         
         case $dns_provider_choice in
             1)
@@ -256,8 +380,10 @@ setup_aliyun_dns_api() {
     echo -e "${CYAN}https://ram.console.aliyun.com/manage/ak${RESET}"
     echo ""
     
-    read -p "请输入 AccessKey ID: " ali_key
-    read -s -p "请输入 AccessKey Secret: " ali_secret
+    echo -n "请输入 AccessKey ID: "
+    read -r ali_key
+    echo -n "请输入 AccessKey Secret (输入不可见): "
+    read -rs ali_secret
     echo ""
     
     if [[ -n "$ali_key" && -n "$ali_secret" ]]; then
@@ -276,8 +402,10 @@ setup_tencent_dns_api() {
     echo -e "${CYAN}https://console.cloud.tencent.com/cam/capi${RESET}"
     echo ""
     
-    read -p "请输入 SecretId: " tencent_id
-    read -s -p "请输入 SecretKey: " tencent_key
+    echo -n "请输入 SecretId: "
+    read -r tencent_id
+    echo -n "请输入 SecretKey (输入不可见): "
+    read -rs tencent_key
     echo ""
     
     if [[ -n "$tencent_id" && -n "$tencent_key" ]]; then
@@ -296,7 +424,8 @@ setup_cloudflare_dns_api() {
     echo -e "${CYAN}https://dash.cloudflare.com/profile/api-tokens${RESET}"
     echo ""
     
-    read -s -p "请输入 API Token: " cf_token
+    echo -n "请输入 API Token (输入不可见): "
+    read -rs cf_token
     echo ""
     
     if [[ -n "$cf_token" ]]; then
@@ -314,8 +443,10 @@ setup_dnspod_dns_api() {
     echo -e "${CYAN}https://console.dnspod.cn/account/token${RESET}"
     echo ""
     
-    read -p "请输入 API ID: " dp_id
-    read -s -p "请输入 API Key: " dp_key
+    echo -n "请输入 API ID: "
+    read -r dp_id
+    echo -n "请输入 API Key (输入不可见): "
+    read -rs dp_key
     echo ""
     
     if [[ -n "$dp_id" && -n "$dp_key" ]]; then
@@ -334,8 +465,10 @@ setup_huawei_dns_api() {
     echo -e "${CYAN}https://console.huaweicloud.com/iam/#/mine/accessKey${RESET}"
     echo ""
     
-    read -p "请输入 Access Key: " huawei_key
-    read -s -p "请输入 Secret Key: " huawei_secret
+    echo -n "请输入 Access Key: "
+    read -r huawei_key
+    echo -n "请输入 Secret Key (输入不可见): "
+    read -rs huawei_secret
     echo ""
     
     if [[ -n "$huawei_key" && -n "$huawei_secret" ]]; then
@@ -361,7 +494,8 @@ show_other_providers() {
 
 # 设置自定义DNS API
 setup_custom_dns_api() {
-    read -p "请输入 DNS API 名称 (例如: dns_gd): " custom_dns
+    echo -n "请输入 DNS API 名称 (例如: dns_gd): "
+    read -r custom_dns
     
     if [[ -z "$custom_dns" ]]; then
         error_exit "DNS API 名称不能为空"
@@ -371,32 +505,13 @@ setup_custom_dns_api() {
     log "INFO" "请根据 acme.sh 文档配置对应的环境变量"
     log "INFO" "文档地址：https://github.com/acmesh-official/acme.sh/wiki/dnsapi"
     
-    read -p "按 [Enter] 继续，确保已配置好相关环境变量..."
-}
-
-# 获取域名输入
-get_domain_input() {
-    while true; do
-        read -p "请输入域名 (例如: example.com 或 *.example.com): " domain_input
-        
-        if [[ -z "$domain_input" ]]; then
-            log "WARN" "域名不能为空"
-            continue
-        fi
-        
-        if validate_domain "$domain_input"; then
-            DOMAIN="$domain_input"
-            log "INFO" "域名格式验证通过: $DOMAIN"
-            break
-        else
-            log "WARN" "域名格式不正确，请重新输入"
-        fi
-    done
+    echo -n "按 [Enter] 继续，确保已配置好相关环境变量..."
+    read -r
 }
 
 # 选择操作类型
 select_operation() {
-    echo -e "${GREEN}${BOLD}选择操作类型：${RESET}"
+    echo -e "${GREEN}${BOLD}请选择操作类型：${RESET}"
     echo -e "  ${BLUE}1)${RESET} 申请新证书"
     echo -e "  ${BLUE}2)${RESET} 续期现有证书"
     echo -e "  ${BLUE}3)${RESET} 强制更新证书"
@@ -404,7 +519,8 @@ select_operation() {
     echo ""
     
     while true; do
-        read -p "请选择 [1-4]: " operation_choice
+        echo -n "请选择 [1-4]: "
+        read -r operation_choice
         
         case $operation_choice in
             1)
@@ -427,7 +543,7 @@ select_operation() {
             4)
                 list_certificates
                 select_operation
-                break
+                return
                 ;;
             *)
                 log "WARN" "无效选择，请重新输入"
@@ -438,14 +554,16 @@ select_operation() {
 
 # 检查现有证书
 check_existing_cert() {
-    if command -v acme.sh &> /dev/null; then
-        local existing=$(acme.sh --list 2>/dev/null | grep -w "$DOMAIN" || true)
+    if command -v acme.sh >/dev/null 2>&1; then
+        local existing
+        existing=$(acme.sh --list 2>/dev/null | grep -w "$DOMAIN" || true)
         if [[ -n "$existing" ]]; then
             log "WARN" "域名 $DOMAIN 已存在证书"
             echo -e "${YELLOW}现有证书信息：${RESET}"
             echo "$existing"
             echo ""
-            read -p "是否继续？这将覆盖现有证书 [y/N]: " continue_choice
+            echo -n "是否继续？这将覆盖现有证书 [y/N]: "
+            read -r continue_choice
             if [[ ! "$continue_choice" =~ ^[Yy]$ ]]; then
                 log "INFO" "操作已取消"
                 exit 0
@@ -457,8 +575,9 @@ check_existing_cert() {
 # 列出现有证书
 list_certificates() {
     echo -e "${GREEN}${BOLD}现有证书列表：${RESET}"
-    if command -v acme.sh &> /dev/null; then
-        local cert_list=$(acme.sh --list 2>/dev/null)
+    if command -v acme.sh >/dev/null 2>&1; then
+        local cert_list
+        cert_list=$(acme.sh --list 2>/dev/null || true)
         if [[ -n "$cert_list" ]]; then
             echo "$cert_list"
         else
@@ -472,11 +591,12 @@ list_certificates() {
 
 # 选择现有域名
 select_existing_domain() {
-    if ! command -v acme.sh &> /dev/null; then
+    if ! command -v acme.sh >/dev/null 2>&1; then
         error_exit "acme.sh 未安装，无法操作现有证书"
     fi
     
-    local domains=$(acme.sh --list 2>/dev/null | awk 'NR>1 {print $1}' | grep -v "^$" || true)
+    local domains
+    domains=$(acme.sh --list 2>/dev/null | awk 'NR>1 {print $1}' | grep -v "^$" || true)
     
     if [[ -z "$domains" ]]; then
         error_exit "未找到任何现有证书"
@@ -496,7 +616,8 @@ select_existing_domain() {
     
     echo ""
     while true; do
-        read -p "请选择域名 [1-$((i-1))]: " domain_choice
+        echo -n "请选择域名 [1-$((i-1))]: "
+        read -r domain_choice
         
         if [[ "$domain_choice" =~ ^[0-9]+$ ]] && [[ "$domain_choice" -ge 1 ]] && [[ "$domain_choice" -le $((i-1)) ]]; then
             DOMAIN="${domain_array[$((domain_choice-1))]}"
@@ -510,7 +631,7 @@ select_existing_domain() {
 
 # 安装 acme.sh
 install_acme() {
-    if command -v acme.sh &> /dev/null; then
+    if command -v acme.sh >/dev/null 2>&1; then
         log "SUCCESS" "acme.sh 已安装"
         return 0
     fi
@@ -520,8 +641,8 @@ install_acme() {
     # 下载并安装 acme.sh
     {
         cd /tmp
-        wget -O- https://get.acme.sh | sh -s email=admin@example.com
-    } &
+        curl https://get.acme.sh | sh -s email=admin@example.com
+    } > /dev/null 2>&1 &
     
     show_progress $! "正在安装 acme.sh"
     wait
@@ -542,7 +663,7 @@ install_acme() {
 # 设置 CA
 set_ca() {
     log "INFO" "设置 CA 为: $CA_URL"
-    if ! acme.sh --set-default-ca --server "$CA_URL"; then
+    if ! acme.sh --set-default-ca --server "$CA_URL" >/dev/null 2>&1; then
         error_exit "设置 CA 失败"
     fi
     log "SUCCESS" "CA 设置完成"
@@ -565,8 +686,14 @@ verify_dns_record() {
         local verified=false
         
         for dns_server in "${dns_servers[@]}"; do
-            local result=$(dig @"$dns_server" +short TXT "_acme-challenge.$domain" 2>/dev/null || true)
-            if echo "$result" | grep -q "$txt_value"; then
+            local result
+            if command -v dig >/dev/null 2>&1; then
+                result=$(dig @"$dns_server" +short TXT "_acme-challenge.$domain" 2>/dev/null | tr -d '"' || true)
+            elif command -v nslookup >/dev/null 2>&1; then
+                result=$(nslookup -type=TXT "_acme-challenge.$domain" "$dns_server" 2>/dev/null | grep -v "^$" | tail -1 | cut -d'"' -f2 || true)
+            fi
+            
+            if [[ "$result" == *"$txt_value"* ]]; then
                 verified=true
                 break
             fi
@@ -582,7 +709,7 @@ verify_dns_record() {
             return 1
         fi
         
-        log "INFO" "等待 DNS 记录生效... ($(($max_attempts - $attempt)) 次重试剩余)"
+        log "INFO" "等待 DNS 记录生效... ($((max_attempts - attempt)) 次重试剩余)"
         sleep 10
         ((attempt++))
     done
@@ -596,7 +723,7 @@ issue_certificate() {
         # 使用 DNS API 自动验证
         log "INFO" "使用 DNS API 自动验证: $DNS_PROVIDER"
         
-        if acme.sh --issue --dns "$DNS_PROVIDER" --keylength ec-256 -d "$DOMAIN"; then
+        if acme.sh --issue --dns "$DNS_PROVIDER" --keylength ec-256 -d "$DOMAIN" >/dev/null 2>&1; then
             log "SUCCESS" "证书申请成功（DNS API 验证）"
         else
             error_exit "证书申请失败（DNS API 验证）"
@@ -635,7 +762,8 @@ issue_certificate() {
         echo -e "${CYAN}TTL：${RESET} 600 (或最小值)"
         echo ""
         
-        read -p "添加完成后按 [Enter] 继续，或输入 'q' 退出: " continue_choice
+        echo -n "添加完成后按 [Enter] 继续，或输入 'q' 退出: "
+        read -r continue_choice
         if [[ "$continue_choice" == "q" ]]; then
             log "INFO" "操作已取消"
             exit 0
@@ -643,7 +771,8 @@ issue_certificate() {
         
         # 验证 DNS 记录
         if ! verify_dns_record "$DOMAIN" "$txt_value"; then
-            read -p "DNS 记录验证失败，是否强制继续？[y/N]: " force_continue
+            echo -n "DNS 记录验证失败，是否强制继续？[y/N]: "
+            read -r force_continue
             if [[ ! "$force_continue" =~ ^[Yy]$ ]]; then
                 error_exit "操作已取消"
             fi
@@ -651,147 +780,10 @@ issue_certificate() {
         
         # 第二步：完成验证
         log "INFO" "完成证书验证..."
-        if acme.sh --renew --ecc -d "$DOMAIN" --yes-I-know-dns-manual-mode-enough-go-ahead-please; then
+        if acme.sh --renew --ecc -d "$DOMAIN" --yes-I-know-dns-manual-mode-enough-go-ahead-please >/dev/null 2>&1; then
             log "SUCCESS" "证书申请成功（手动 DNS 验证）"
         else
             error_exit "证书申请失败（手动 DNS 验证）"
-        fi
-    fi
-}
-
-# 处理DNS手动验证
-handle_manual_dns_verification() {
-    local output="$1"
-    local operation_type="$2"
-    
-    # 检查是否需要手动添加DNS记录
-    if echo "$output" | grep -q "You need to add the TXT record manually"; then
-        log "INFO" "需要手动添加 DNS TXT 记录"
-        
-        # 提取TXT记录信息
-        local txt_domain=$(echo "$output" | grep "Domain:" | sed "s/.*Domain: '\(.*\)'/\1/" | head -1)
-        local txt_value=$(echo "$output" | grep "TXT value:" | sed "s/.*TXT value: '\(.*\)'/\1/" | head -1)
-        
-        if [[ -z "$txt_domain" || -z "$txt_value" ]]; then
-            # 尝试另一种提取方式
-            txt_domain=$(echo "$output" | grep -oP "Domain:\s*['\"]?\K[^'\"]*" | head -1)
-            txt_value=$(echo "$output" | grep -oP "TXT value:\s*['\"]?\K[^'\"]*" | head -1)
-        fi
-        
-        if [[ -n "$txt_domain" && -n "$txt_value" ]]; then
-            echo ""
-            echo -e "${YELLOW}${BOLD}请添加以下 DNS TXT 记录：${RESET}"
-            echo -e "${CYAN}记录名称：${RESET} $txt_domain"
-            echo -e "${CYAN}记录类型：${RESET} TXT" 
-            echo -e "${CYAN}记录值：${RESET} $txt_value"
-            echo -e "${CYAN}TTL：${RESET} 600 (或最小值)"
-            echo ""
-            
-            # 询问是否使用DNS API
-            read -p "是否使用 DNS API 自动处理此验证？[y/N]: " use_api
-            if [[ "$use_api" =~ ^[Yy]$ ]]; then
-                select_dns_provider
-                
-                # 使用DNS API重新执行操作
-                local final_result
-                case "$operation_type" in
-                    "renew")
-                        final_result=$(acme.sh --renew --ecc --dns "$DNS_PROVIDER" -d "$DOMAIN" 2>&1 || true)
-                        ;;
-                    "force_renew")
-                        final_result=$(acme.sh --renew --ecc --dns "$DNS_PROVIDER" -d "$DOMAIN" --force 2>&1 || true)
-                        ;;
-                esac
-                
-                if echo "$final_result" | grep -q "Success"; then
-                    log "SUCCESS" "证书${operation_type}成功 (DNS API)"
-                    return 0
-                else
-                    log "ERROR" "证书${operation_type}失败 (DNS API)"
-                    echo "$final_result"
-                    return 1
-                fi
-            else
-                # 手动验证流程
-                while true; do
-                    read -p "是否已完成 DNS 记录添加？[y/N/q]: " dns_choice
-                    case "$dns_choice" in
-                        [Yy]*)
-                            log "INFO" "用户确认已添加 DNS 记录，继续验证..."
-                            
-                            # 验证DNS记录
-                            if verify_dns_record "${txt_domain#_acme-challenge.}" "$txt_value"; then
-                                log "SUCCESS" "DNS 记录验证成功，继续证书操作..."
-                                
-                                # 继续执行证书验证
-                                local final_result
-                                case "$operation_type" in
-                                    "renew")
-                                        final_result=$(acme.sh --renew --ecc -d "$DOMAIN" 2>&1 || true)
-                                        ;;
-                                    "force_renew")
-                                        final_result=$(acme.sh --renew --ecc -d "$DOMAIN" --force 2>&1 || true)
-                                        ;;
-                                esac
-                                
-                                if echo "$final_result" | grep -q "Success"; then
-                                    log "SUCCESS" "证书${operation_type}成功 (手动验证)"
-                                    return 0
-                                else
-                                    log "ERROR" "证书${operation_type}失败 (手动验证)"
-                                    echo "$final_result"
-                                    return 1
-                                fi
-                            else
-                                log "WARN" "DNS 记录验证失败"
-                                read -p "是否强制继续？[y/N]: " force_continue
-                                if [[ "$force_continue" =~ ^[Yy]$ ]]; then
-                                    log "INFO" "强制继续证书验证..."
-                                    local final_result
-                                    case "$operation_type" in
-                                        "renew")
-                                            final_result=$(acme.sh --renew --ecc -d "$DOMAIN" 2>&1 || true)
-                                            ;;
-                                        "force_renew")
-                                            final_result=$(acme.sh --renew --ecc -d "$DOMAIN" --force 2>&1 || true)
-                                            ;;
-                                    esac
-                                    
-                                    if echo "$final_result" | grep -q "Success"; then
-                                        log "SUCCESS" "证书${operation_type}成功 (强制执行)"
-                                        return 0
-                                    else
-                                        log "ERROR" "证书${operation_type}失败 (强制执行)"
-                                        echo "$final_result"
-                                        return 1
-                                    fi
-                                fi
-                            fi
-                            ;;
-                        [Qq]*)
-                            log "INFO" "用户取消操作"
-                            exit 0
-                            ;;
-                        *)
-                            log "INFO" "请先添加 DNS 记录后再确认"
-                            ;;
-                    esac
-                done
-            fi
-        else
-            log "ERROR" "无法提取 DNS 记录信息"
-            echo "$output"
-            return 1
-        fi
-    else
-        # 不需要手动DNS验证，检查其他结果
-        if echo "$output" | grep -q "Success"; then
-            log "SUCCESS" "证书${operation_type}成功"
-            return 0
-        else
-            log "ERROR" "证书${operation_type}失败"
-            echo "$output"
-            return 1
         fi
     fi
 }
@@ -803,21 +795,21 @@ renew_certificate() {
     local renewal_output
     renewal_output=$(acme.sh --renew --ecc -d "$DOMAIN" 2>&1 || true)
     
-    if echo "$renewal_output" | grep -q "Skipping"; then
+    if echo "$renewal_output" | grep -q "Skip"; then
         log "INFO" "证书尚未到续期时间"
         echo "$renewal_output" | grep -E "(Skip|Next renewal)"
         
-        read -p "是否强制续期？[y/N]: " force_choice
+        echo -n "是否强制续期？[y/N]: "
+        read -r force_choice
         if [[ "$force_choice" =~ ^[Yy]$ ]]; then
             force_renew_certificate
         else
             log "INFO" "续期操作已跳过"
         fi
+    elif echo "$renewal_output" | grep -q "Success"; then
+        log "SUCCESS" "证书续期成功"
     else
-        # 处理可能的DNS手动验证
-        if ! handle_manual_dns_verification "$renewal_output" "renew"; then
-            error_exit "证书续期失败"
-        fi
+        error_exit "证书续期失败"
     fi
 }
 
@@ -825,11 +817,9 @@ renew_certificate() {
 force_renew_certificate() {
     log "INFO" "强制更新证书: $DOMAIN"
     
-    local renewal_output
-    renewal_output=$(acme.sh --renew --ecc -d "$DOMAIN" --force 2>&1 || true)
-    
-    # 处理可能的DNS手动验证
-    if ! handle_manual_dns_verification "$renewal_output" "force_renew"; then
+    if acme.sh --renew --ecc -d "$DOMAIN" --force >/dev/null 2>&1; then
+        log "SUCCESS" "证书强制更新成功"
+    else
         error_exit "证书强制更新失败"
     fi
 }
@@ -845,18 +835,38 @@ create_cert_directory() {
     fi
 }
 
+# 检查nginx状态
+check_nginx() {
+    if ! command -v nginx >/dev/null 2>&1; then
+        log "WARN" "未检测到 Nginx，证书将安装但不会重载服务"
+        return 1
+    fi
+    
+    if ! systemctl is-active --quiet nginx; then
+        log "WARN" "Nginx 服务未运行"
+        return 1
+    fi
+    
+    return 0
+}
+
 # 安装证书到 Nginx
 install_certificate() {
     log "INFO" "安装证书到 Nginx..."
     
     create_cert_directory
     
+    local reload_cmd=""
+    if check_nginx; then
+        reload_cmd="nginx -t && systemctl reload nginx"
+    fi
+    
     # 安装证书
     if acme.sh --install-cert -d "$DOMAIN" --ecc \
         --cert-file "$CERT_DIR/${DOMAIN}.cert.pem" \
         --key-file "$CERT_DIR/${DOMAIN}.key.pem" \
         --fullchain-file "$CERT_DIR/${DOMAIN}.fullchain.pem" \
-        --reloadcmd "nginx -t && systemctl reload nginx"; then
+        --reloadcmd "$reload_cmd" >/dev/null 2>&1; then
         
         log "SUCCESS" "证书安装成功"
         log "INFO" "证书文件位置:"
@@ -878,8 +888,8 @@ setup_auto_renewal() {
         return 0
     fi
     
-    # 添加crontab任务
-    local cron_job="0 2 * * * /usr/local/bin/acme.sh --cron --home /root/.acme.sh > /dev/null"
+    # 添加 crontab任务
+    local cron_job="0 2 * * * /usr/local/bin/acme.sh --cron --home /root/.acme.sh >/dev/null 2>&1"
     (crontab -l 2>/dev/null; echo "$cron_job") | crontab -
     
     log "SUCCESS" "自动续期设置完成 (每天凌晨2点检查)"
@@ -888,40 +898,78 @@ setup_auto_renewal() {
 # 显示证书信息
 show_certificate_info() {
     if [[ -f "$CERT_DIR/${DOMAIN}.fullchain.pem" ]]; then
+        echo ""
         log "INFO" "证书信息:"
-        openssl x509 -in "$CERT_DIR/${DOMAIN}.fullchain.pem" -noout -dates -subject -issuer
+        openssl x509 -in "$CERT_DIR/${DOMAIN}.fullchain.pem" -noout -dates -subject -issuer 2>/dev/null || {
+            log "WARN" "无法读取证书信息"
+            return
+        }
         echo ""
         
         # 检查证书有效期
         local expiry_date
-        expiry_date=$(openssl x509 -in "$CERT_DIR/${DOMAIN}.fullchain.pem" -noout -enddate | cut -d= -f2)
-        local expiry_timestamp
-        expiry_timestamp=$(date -d "$expiry_date" +%s)
-        local current_timestamp
-        current_timestamp=$(date +%s)
-        local days_remaining
-        days_remaining=$(( (expiry_timestamp - current_timestamp) / 86400 ))
-        
-        if [[ $days_remaining -gt 30 ]]; then
-            log "SUCCESS" "证书还有 $days_remaining 天过期"
-        elif [[ $days_remaining -gt 0 ]]; then
-            log "WARN" "证书还有 $days_remaining 天过期，建议尽快续期"
-        else
-            log "ERROR" "证书已过期 $((days_remaining * -1)) 天"
+        expiry_date=$(openssl x509 -in "$CERT_DIR/${DOMAIN}.fullchain.pem" -noout -enddate 2>/dev/null | cut -d= -f2)
+        if [[ -n "$expiry_date" ]]; then
+            local expiry_timestamp current_timestamp days_remaining
+            expiry_timestamp=$(date -d "$expiry_date" +%s 2>/dev/null || echo "0")
+            current_timestamp=$(date +%s)
+            days_remaining=$(( (expiry_timestamp - current_timestamp) / 86400 ))
+            
+            if [[ $days_remaining -gt 30 ]]; then
+                log "SUCCESS" "证书还有 $days_remaining 天过期"
+            elif [[ $days_remaining -gt 0 ]]; then
+                log "WARN" "证书还有 $days_remaining 天过期，建议尽快续期"
+            else
+                log "ERROR" "证书已过期 $((days_remaining * -1)) 天"
+            fi
         fi
     fi
+}
+
+# 显示nginx配置示例
+show_nginx_config_example() {
+    echo ""
+    echo -e "${YELLOW}${BOLD}Nginx 配置示例：${RESET}"
+    echo -e "${CYAN}server {
+    listen 443 ssl http2;
+    server_name $DOMAIN;
+    
+    ssl_certificate $CERT_DIR/${DOMAIN}.fullchain.pem;
+    ssl_certificate_key $CERT_DIR/${DOMAIN}.key.pem;
+    
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+    
+    # 安全头部
+    add_header Strict-Transport-Security "max-age=63072000" always;
+    add_header X-Frame-Options DENY;
+    add_header X-Content-Type-Options nosniff;
+    
+    # 网站配置...
+    location / {
+        # 您的网站配置
+    }
+}
+
+# HTTP 重定向到 HTTPS
+server {
+    listen 80;
+    server_name $DOMAIN;
+    return 301 https://\$server_name\$request_uri;
+}${RESET}"
 }
 
 # 主函数
 main() {
     # 初始化
+    init_log_file
     welcome_message
+    detect_os
     check_root
     check_dependencies
-    
-    # 创建日志文件
-    touch "$LOG_FILE"
-    chmod 644 "$LOG_FILE"
     
     # 用户交互
     select_ca
@@ -950,27 +998,12 @@ main() {
     
     # 显示结果
     show_certificate_info
+    show_nginx_config_example
     
     echo ""
     log "SUCCESS" "所有操作完成！"
     log "INFO" "日志文件: $LOG_FILE"
     
-    # 提供nginx配置示例
-    echo -e "${YELLOW}${BOLD}Nginx 配置示例：${RESET}"
-    echo -e "${CYAN}server {
-    listen 443 ssl http2;
-    server_name $DOMAIN;
-    
-    ssl_certificate $CERT_DIR/${DOMAIN}.fullchain.pem;
-    ssl_certificate_key $CERT_DIR/${DOMAIN}.key.pem;
-    
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384;
-    ssl_prefer_server_ciphers off;
-    
-    # Your site configuration...
-}${RESET}"
-
     echo ""
     if [[ "$DNS_METHOD" == "api" ]]; then
         log "INFO" "已使用 DNS API 验证方式，后续续期将自动进行"
@@ -979,6 +1012,8 @@ main() {
         log "INFO" "已使用手动 DNS 验证方式"
         log "INFO" "如需自动化续期，建议配置 DNS API"
     fi
+    
+    echo -e "${GREEN}感谢使用 SSL 证书自动化管理工具！${RESET}"
 }
 
 # 信号处理
