@@ -715,7 +715,7 @@ verify_dns_record() {
     done
 }
 
-# 申请证书
+# 申请证书 - 修复版
 issue_certificate() {
     log "INFO" "开始申请证书: $DOMAIN"
     
@@ -729,58 +729,19 @@ issue_certificate() {
             error_exit "证书申请失败（DNS API 验证）"
         fi
     else
-        # 手动 DNS 验证
+        # 手动 DNS 验证 - 修复：一步完成，交互式操作
         log "INFO" "使用手动 DNS 验证方式"
+        log "INFO" "这将是一个交互式过程，请按 acme.sh 提示添加DNS记录"
         
-        # 第一步：生成 DNS 验证记录
-        log "INFO" "生成 DNS 验证记录..."
-        local challenge_output
-        challenge_output=$(acme.sh --issue --dns --keylength ec-256 -d "$DOMAIN" --yes-I-know-dns-manual-mode-enough-go-ahead-please 2>&1 || true)
-        
-        # 提取 TXT 记录值
-        local txt_name="_acme-challenge.$DOMAIN"
-        local txt_value
-        txt_value=$(echo "$challenge_output" | grep -oP "TXT value: '\K[^']+'" | head -1)
-        
-        if [[ -z "$txt_value" ]]; then
-            # 尝试另一种提取方式
-            txt_value=$(echo "$challenge_output" | grep -oP "TXT value:\s*\K\S+" | head -1)
-        fi
-        
-        if [[ -z "$txt_value" ]]; then
-            log "ERROR" "无法提取 TXT 记录值"
-            echo -e "${RED}验证输出：${RESET}"
-            echo "$challenge_output"
-            error_exit "DNS 验证记录生成失败"
-        fi
-        
-        # 显示 DNS 记录信息
-        echo -e "${YELLOW}${BOLD}请添加以下 DNS TXT 记录：${RESET}"
-        echo -e "${CYAN}记录名称：${RESET} $txt_name"
-        echo -e "${CYAN}记录类型：${RESET} TXT"
-        echo -e "${CYAN}记录值：${RESET} $txt_value"
-        echo -e "${CYAN}TTL：${RESET} 600 (或最小值)"
         echo ""
+        echo -e "${YELLOW}${BOLD}注意：接下来 acme.sh 会显示需要添加的DNS记录信息${RESET}"
+        echo -e "${YELLOW}请在DNS控制台添加显示的TXT记录，然后按提示继续${RESET}"
+        echo ""
+        echo -n "按 [Enter] 开始申请证书..."
+        read -r
         
-        echo -n "添加完成后按 [Enter] 继续，或输入 'q' 退出: "
-        read -r continue_choice
-        if [[ "$continue_choice" == "q" ]]; then
-            log "INFO" "操作已取消"
-            exit 0
-        fi
-        
-        # 验证 DNS 记录
-        if ! verify_dns_record "$DOMAIN" "$txt_value"; then
-            echo -n "DNS 记录验证失败，是否强制继续？[y/N]: "
-            read -r force_continue
-            if [[ ! "$force_continue" =~ ^[Yy]$ ]]; then
-                error_exit "操作已取消"
-            fi
-        fi
-        
-        # 第二步：完成验证
-        log "INFO" "完成证书验证..."
-        if acme.sh --renew --ecc -d "$DOMAIN" --yes-I-know-dns-manual-mode-enough-go-ahead-please >/dev/null 2>&1; then
+        # 修复：使用一步完成的手动DNS验证
+        if acme.sh --issue --dns -d "$DOMAIN" --keylength ec-256 --yes-I-know-dns-manual-mode-enough-go-ahead-please; then
             log "SUCCESS" "证书申请成功（手动 DNS 验证）"
         else
             error_exit "证书申请失败（手动 DNS 验证）"
@@ -788,7 +749,7 @@ issue_certificate() {
     fi
 }
 
-# 续期证书
+# 续期证书 - 修复版
 renew_certificate() {
     log "INFO" "开始续期证书: $DOMAIN"
     
@@ -809,18 +770,82 @@ renew_certificate() {
     elif echo "$renewal_output" | grep -q "Success"; then
         log "SUCCESS" "证书续期成功"
     else
-        error_exit "证书续期失败"
+        # 检查是否需要手动DNS验证
+        if echo "$renewal_output" | grep -q "dns manual mode" || [[ "$DOMAIN" == \*.* ]]; then
+            log "INFO" "需要手动DNS验证进行续期"
+            
+            # 检查证书配置
+            local cert_conf="$HOME/.acme.sh/${DOMAIN}_ecc/${DOMAIN}.conf"
+            if [[ -f "$cert_conf" ]] && grep -q "Le_Webroot='dns'" "$cert_conf" 2>/dev/null; then
+                log "INFO" "使用手动DNS验证续期"
+                echo ""
+                echo -e "${YELLOW}${BOLD}注意：需要重新添加DNS验证记录${RESET}"
+                echo -n "按 [Enter] 继续..."
+                read -r
+                
+                if acme.sh --renew --ecc -d "$DOMAIN" --yes-I-know-dns-manual-mode-enough-go-ahead-please; then
+                    log "SUCCESS" "证书续期成功（手动DNS验证）"
+                else
+                    error_exit "证书续期失败（手动DNS验证）"
+                fi
+            else
+                error_exit "证书续期失败，请检查配置或重新申请证书"
+            fi
+        else
+            error_exit "证书续期失败"
+        fi
     fi
 }
 
-# 强制更新证书
+# 强制续期证书 - 修复版
 force_renew_certificate() {
     log "INFO" "强制更新证书: $DOMAIN"
     
-    if acme.sh --renew --ecc -d "$DOMAIN" --force >/dev/null 2>&1; then
-        log "SUCCESS" "证书强制更新成功"
+    # 检查证书配置文件，确定验证方式
+    local cert_conf="$HOME/.acme.sh/${DOMAIN}_ecc/${DOMAIN}.conf"
+    local dns_api_provider=""
+    
+    if [[ -f "$cert_conf" ]]; then
+        # 检查是否使用DNS API
+        if grep -q "Le_Webroot='dns_" "$cert_conf" 2>/dev/null; then
+            dns_api_provider=$(grep "Le_Webroot=" "$cert_conf" | cut -d"'" -f2)
+            log "INFO" "检测到原证书使用DNS API: $dns_api_provider"
+        elif grep -q "Le_Webroot='dns'" "$cert_conf" 2>/dev/null; then
+            log "INFO" "检测到原证书使用手动DNS验证"
+        fi
+    fi
+    
+    if [[ -n "$dns_api_provider" && "$dns_api_provider" != "dns" ]]; then
+        # 使用DNS API强制续期
+        log "INFO" "使用DNS API强制续期: $dns_api_provider"
+        if acme.sh --renew --ecc -d "$DOMAIN" --force >/dev/null 2>&1; then
+            log "SUCCESS" "证书强制更新成功（DNS API）"
+        else
+            error_exit "证书强制更新失败（DNS API）"
+        fi
+    elif [[ "$DOMAIN" == \*.* ]] || (grep -q "Le_Webroot='dns'" "$cert_conf" 2>/dev/null); then
+        # 通配符域名或手动DNS验证，使用手动DNS验证强制续期
+        log "INFO" "使用手动DNS验证强制续期"
+        log "INFO" "这将是一个交互式过程，请按 acme.sh 提示操作"
+        
+        echo ""
+        echo -e "${YELLOW}${BOLD}注意：需要重新添加DNS验证记录${RESET}"
+        echo -n "按 [Enter] 继续..."
+        read -r
+        
+        # 修复：使用正确的手动DNS验证强制续期命令
+        if acme.sh --renew --ecc -d "$DOMAIN" --force --yes-I-know-dns-manual-mode-enough-go-ahead-please; then
+            log "SUCCESS" "证书强制更新成功（手动DNS验证）"
+        else
+            error_exit "证书强制更新失败（手动DNS验证）"
+        fi
     else
-        error_exit "证书强制更新失败"
+        # 非通配符域名，可以使用HTTP验证
+        if acme.sh --renew --ecc -d "$DOMAIN" --force >/dev/null 2>&1; then
+            log "SUCCESS" "证书强制更新成功"
+        else
+            error_exit "证书强制更新失败"
+        fi
     fi
 }
 
