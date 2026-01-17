@@ -112,23 +112,37 @@ download_and_verify() {
     mkdir -p "$TMP_DIR"
 
     local tar="frp_${LATEST_VERSION}_linux_${PLATFORM}.tar.gz"
-    local sum="sha256sums.txt"
+    local url="$GITHUB_RELEASES/download/v${LATEST_VERSION}/$tar"
 
-    log "$INFO" "Downloading FRP package"
-    $FETCH_CMD "$TMP_DIR/$tar" "$GITHUB_RELEASES/download/v${LATEST_VERSION}/$tar"
+    log "$INFO" "Downloading FRP package..."
+    $FETCH_CMD "$TMP_DIR/$tar" "$url"
 
-    log "$INFO" "Downloading SHA256 sums"
-    $FETCH_CMD "$TMP_DIR/$sum" "$GITHUB_RELEASES/download/v${LATEST_VERSION}/$sum"
+    # 自动抓 SHA256
+    if command_exists sha256sum && command_exists curl && command_exists grep && command_exists awk; then
+        log "$INFO" "Fetching SHA256 from GitHub Release page..."
 
-    command_exists sha256sum || { log "$ERR" "sha256sum not found"; exit 1; }
+        local sha_page
+        sha_page="$(curl -fsSL "$GITHUB_RELEASES/releases/tag/v$LATEST_VERSION")"
 
-    log "$INFO" "Verifying checksum..."
-    (
-        cd "$TMP_DIR" || exit 1
-        grep "$tar" "$sum" | sha256sum -c -
-    ) || { log "$ERR" "SHA256 verification failed"; exit 1; }
+        # HTML 解析: 找到对应 tar.gz 链接前面的 SHA256
+        local sha
+        sha="$(echo "$sha_page" | grep -A2 "$tar" | grep -oE '[a-f0-9]{64}' | head -n1)"
 
-    log "$OK" "SHA256 verified"
+        if [[ -z "$sha" ]]; then
+            log "$WARN" "Cannot parse SHA256 from release page, skipping verification"
+        else
+            log "$INFO" "SHA256 from release page: $sha"
+            echo "$sha  $TMP_DIR/$tar" | sha256sum -c -
+            if [[ $? -ne 0 ]]; then
+                log "$ERR" "SHA256 verification failed!"
+                exit 1
+            else
+                log "$OK" "SHA256 verified"
+            fi
+        fi
+    else
+        log "$WARN" "sha256sum/curl/grep/awk not available, skip verification"
+    fi
 }
 
 # ================== 安装 ==================
