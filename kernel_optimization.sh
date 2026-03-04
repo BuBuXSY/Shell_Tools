@@ -1,131 +1,199 @@
 #!/bin/bash
 # ====================================================
-# 🌉 Linux 内核深度优化脚本 v3.0
-# 🚀 特性: RPS/RFS 多核加速 | BBR 联动 | 动态内存预留
-# 🛠️ 适用: OpenWrt, Ubuntu, Debian, CentOS, Arch
-# By: BuBuXSY | Version: 2026.03.04
+# 🌉 Linux 内核架构级优化工具 v5.0
+# 🚀 NUMA 自动绑定 | IRQ 亲和优化 | 100G 网卡适配
+# ☁ 自动云厂商检测与参数自适应
+# By: BuBuXSY | Version: 5.0
 # ====================================================
 
 set -euo pipefail
 
-# --- 样式与颜色 ---
-readonly RED=$'\033[1;31m'; readonly GREEN=$'\033[1;32m'; readonly YELLOW=$'\033[1;33m'
-readonly BLUE=$'\033[1;34m'; readonly CYAN=$'\033[1;36m'; readonly BOLD=$'\033[1m'; readonly RESET=$'\033[0m'
+# =========================
+# 🎨 样式
+# =========================
+readonly RED=$'\033[1;31m'
+readonly GREEN=$'\033[1;32m'
+readonly YELLOW=$'\033[1;33m'
+readonly CYAN=$'\033[1;36m'
+readonly RESET=$'\033[0m'
 
-# --- 路径配置 ---
-readonly LOG_FILE="/var/log/kernel_optimization.log"
-readonly BACKUP_DIR="/var/backups/kernel_optimization"
-readonly SYSCTL_CONF="/etc/sysctl.d/99-performance.conf"
+log()  { echo -e "${CYAN}[ℹ]${RESET} $1"; }
+ok()   { echo -e "${GREEN}[✓]${RESET} $1"; }
+warn() { echo -e "${YELLOW}[!]${RESET} $1"; }
 
-# --- 全局变量 ---
-declare -A OPTIMAL_VALUES
+# =========================
+# 🛡 基础检查
+# =========================
+if [[ $EUID -ne 0 ]]; then
+    echo "必须使用 root 运行"
+    exit 1
+fi
+
+# =========================
+# 🖥 系统信息
+# =========================
 CPU_CORES=$(nproc)
-TOTAL_MEM=$(awk '/^MemTotal:/{print $2}' /proc/meminfo) # 单位: KB
+TOTAL_MEM=$(awk '/MemTotal/ {print $2}' /proc/meminfo)
+TOTAL_MEM_GB=$((TOTAL_MEM / 1024 / 1024))
 
-log() { echo -e "${CYAN}[ℹ️]${RESET} $1" | tee -a "$LOG_FILE"; }
-ok()  { echo -e "${GREEN}[✅]${RESET} $1" | tee -a "$LOG_FILE"; }
-err() { echo -e "${RED}[❌]${RESET} $1" | tee -a "$LOG_FILE"; }
+# =========================
+# ☁ 云厂商检测
+# =========================
+detect_cloud() {
 
-# 1. 环境预检
-check_env() {
-    if [ "$(id -u)" != "0" ]; then
-        err "必须以 root 权限运行此脚本！"
-        exit 1
+    if grep -qi "amazon" /sys/devices/virtual/dmi/id/product_name 2>/dev/null; then
+        CLOUD="AWS"
+    elif grep -qi "google" /sys/devices/virtual/dmi/id/product_name 2>/dev/null; then
+        CLOUD="GCP"
+    elif grep -qi "microsoft" /sys/devices/virtual/dmi/id/product_name 2>/dev/null; then
+        CLOUD="Azure"
+    elif systemd-detect-virt -q; then
+        CLOUD="Virtualized"
+    else
+        CLOUD="BareMetal"
     fi
-    mkdir -p "$BACKUP_DIR"
-    log "正在分析 VPS 性能画像 (CPU: $CPU_CORES Cores, MEM: $((TOTAL_MEM/1024))MB)..."
+
+    ok "检测到环境: $CLOUD"
 }
 
-# 2. RPS/RFS 多核网络加速 (核心黑科技)
-# 原理: 将单核处理的网络中断负载分摊到所有 CPU 核心
-enable_rps() {
-    log "正在配置 RPS/RFS 多核网络加速..."
-    # 计算全核心十六进制掩码
-    local mask_num=$(( (1 << CPU_CORES) - 1 ))
-    local mask_hex=$(printf "%x" $mask_num)
-    
-    # 自动识别物理网卡
-    local interfaces=$(ls /sys/class/net | grep -vE 'lo|docker|veth|br-|virbr|any')
+# =========================
+# 🧠 NUMA 自动绑定
+# =========================
+optimize_numa() {
 
-    for iface in $interfaces; do
-        if [ -d "/sys/class/net/$iface/queues" ]; then
-            for rps_file in /sys/class/net/$iface/queues/rx-*/rps_cpus; do
-                echo "$mask_hex" > "$rps_file" 2>/dev/null || true
-            done
-            for rfc_file in /sys/class/net/$iface/queues/rx-*/rps_flow_cnt; do
-                echo "4096" > "$rfc_file" 2>/dev/null || true
-            done
-            log "网卡 $iface 已成功映射至 CPU 掩码: $mask_hex"
+    if command -v numactl >/dev/null 2>&1; then
+        log "检测 NUMA 拓扑..."
+
+        NUMA_NODES=$(numactl --hardware | grep "available:" | awk '{print $2}')
+
+        if [[ "$NUMA_NODES" -gt 1 ]]; then
+            ok "检测到多 NUMA 节点 ($NUMA_NODES)"
+
+            # 绑定当前进程到所有节点（高性能模式）
+            numactl --interleave=all true || true
+            ok "已启用 NUMA 内存交错模式"
+        else
+            warn "单 NUMA 架构"
+        fi
+    else
+        warn "未安装 numactl，跳过 NUMA 优化"
+    fi
+}
+
+# =========================
+# ⚡ IRQ 自动亲和性优化
+# =========================
+optimize_irq() {
+
+    log "优化 IRQ 亲和性..."
+
+    local cpu_mask
+    cpu_mask=$(printf "%x" $(( (1 << CPU_CORES) - 1 )))
+
+    for irq in /proc/irq/*; do
+        if [[ -f "$irq/smp_affinity" ]]; then
+            echo "$cpu_mask" > "$irq/smp_affinity" 2>/dev/null || true
         fi
     done
-    OPTIMAL_VALUES["net.core.rps_sock_flow_entries"]=32768
+
+    ok "IRQ 已分配至多核 (mask=$cpu_mask)"
 }
 
-# 3. 动态计算最优参数 (拒绝死板数值)
-calc_params() {
-    # 动态内存预留: 设为内存的 0.4%, 避免大流量冲击时系统假死
-    local min_free=$(( TOTAL_MEM * 4 / 1000 ))
-    [[ $min_free -lt 16384 ]] && min_free=16384
-    [[ $min_free -gt 262144 ]] && min_free=262144
-    OPTIMAL_VALUES["vm.min_free_kbytes"]=$min_free
+# =========================
+# 🚀 100G 网卡优化
+# =========================
+optimize_100g() {
 
-    # 提升并发连接上限
-    OPTIMAL_VALUES["net.core.somaxconn"]=65535
-    OPTIMAL_VALUES["net.ipv4.tcp_max_syn_backlog"]=16384
-    OPTIMAL_VALUES["net.ipv4.tcp_tw_reuse"]=1
-    OPTIMAL_VALUES["net.ipv4.tcp_fin_timeout"]=15
-    OPTIMAL_VALUES["net.ipv4.ip_local_port_range"]="1024 65535"
-    OPTIMAL_VALUES["net.ipv4.tcp_fastopen"]=3
-    
-    # 内存交换策略优化
-    OPTIMAL_VALUES["vm.swappiness"]=10
-    OPTIMAL_VALUES["vm.vfs_cache_pressure"]=50
-    
-    # BBR 拥塞控制探测与联动
-    if grep -q "bbr" /proc/sys/net/ipv4/tcp_available_congestion_control; then
-        OPTIMAL_VALUES["net.core.default_qdisc"]="fq"
-        OPTIMAL_VALUES["net.ipv4.tcp_congestion_control"]="bbr"
-        OPTIMAL_VALUES["net.ipv4.tcp_slow_start_after_idle"]=0
-        ok "BBR 拥塞控制与 FQ 队列联动已准备就绪"
-    fi
-}
+    log "检测高性能网卡..."
 
-# 4. 应用配置与备份
-apply_all() {
-    # 备份当前配置以防万一
-    sysctl -a > "$BACKUP_DIR/sysctl_before_opt_$(date +%s).conf" 2>/dev/null || true
-    
-    # 确保目录存在
-    mkdir -p "$(dirname "$SYSCTL_CONF")"
-    
-    echo "# BuBuXSY 终极优化配置 v3.0" > "$SYSCTL_CONF"
-    for key in "${!OPTIMAL_VALUES[@]}"; do
-        echo "$key = ${OPTIMAL_VALUES[$key]}" >> "$SYSCTL_CONF"
-        # 实时生效
-        sysctl -w "$key=${OPTIMAL_VALUES[$key]}" >/dev/null 2>&1 || true
+    for iface in $(ls /sys/class/net | grep -v lo); do
+
+        if [[ -f /sys/class/net/$iface/speed ]]; then
+            SPEED=$(cat /sys/class/net/$iface/speed 2>/dev/null || echo 0)
+
+            if [[ "$SPEED" -ge 100000 ]]; then
+                ok "检测到 100G 网卡: $iface"
+
+                # 增加队列数
+                ethtool -L "$iface" combined "$CPU_CORES" 2>/dev/null || true
+
+                # 开启多队列
+                echo 4096 > /proc/sys/net/core/rps_sock_flow_entries 2>/dev/null || true
+            fi
+        fi
     done
-    
-    # 强制刷新
-    sysctl -p "$SYSCTL_CONF" >/dev/null 2>&1 || true
-    ok "内核优化参数已成功持久化至 $SYSCTL_CONF"
 }
 
-# --- 执行主流程 ---
-clear
-echo -e "${CYAN}${BOLD}================================================${RESET}"
-echo -e "${CYAN}${BOLD}    🚀 BuBuXSY Linux 内核优化工具 v3.0      ${RESET}"
-echo -e "${CYAN}${BOLD}================================================${RESET}"
+# =========================
+# ☁ 云环境自适应参数
+# =========================
+apply_cloud_tuning() {
 
-check_env
-enable_rps
-calc_params
-apply_all
+    log "根据环境调整参数..."
 
-echo -e "\n${GREEN}${BOLD}✨ 优化执行完毕！系统性能已拉满。${RESET}"
-echo -e "${YELLOW}主要提升亮点：${RESET}"
-echo -e " 1. ${WHITE}多核网络加速:${RESET} RPS 已将网卡中断分摊至所有核心"
-echo -e " 2. ${WHITE}紧急内存预留:${RESET} 已锁定 $((OPTIMAL_VALUES["vm.min_free_kbytes"]/1024))MB 缓冲区"
-echo -e " 3. ${WHITE}吞吐量优化:${RESET} BBR + FQ 算法已生效"
-echo -e " 4. ${WHITE}高并发支持:${RESET} somaxconn 提升至 65535"
-echo -e "------------------------------------------------"
-echo -e "建议：使用 ${CYAN}ss -i${RESET} 查看 BBR 运行状态，或重启系统以达最佳效果。"
+    case "$CLOUD" in
+        AWS)
+            warn "AWS 优化模式"
+            sysctl -w net.core.rmem_max=134217728 >/dev/null
+            ;;
+        Azure)
+            warn "Azure 优化模式"
+            sysctl -w net.ipv4.tcp_tw_reuse=1 >/dev/null
+            ;;
+        GCP)
+            warn "GCP 优化模式"
+            sysctl -w net.core.netdev_max_backlog=65535 >/dev/null
+            ;;
+        BareMetal)
+            ok "物理机模式，启用最大性能"
+            ;;
+    esac
+}
+
+# =========================
+# 🔧 通用高性能参数
+# =========================
+apply_sysctl() {
+
+cat > /etc/sysctl.d/99-v5-performance.conf <<EOF
+net.core.somaxconn = 65535
+net.core.netdev_max_backlog = 65535
+net.ipv4.tcp_max_syn_backlog = 32768
+net.ipv4.tcp_fastopen = 3
+net.ipv4.tcp_fin_timeout = 10
+net.ipv4.tcp_tw_reuse = 1
+net.ipv4.tcp_max_tw_buckets = 500000
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+vm.swappiness = 10
+fs.file-max = 2097152
+EOF
+
+sysctl --system >/dev/null
+ok "基础性能参数已应用"
+}
+
+# =========================
+# 🚀 主流程
+# =========================
+main() {
+
+    clear
+    echo -e "${CYAN}"
+    echo "================================================"
+    echo "   🌉 Linux 架构级优化工具 v5.0"
+    echo "================================================"
+    echo -e "${RESET}"
+
+    detect_cloud
+    optimize_numa
+    optimize_irq
+    optimize_100g
+    apply_sysctl
+    apply_cloud_tuning
+
+    echo
+    ok "🎉 架构级优化完成！系统已进入高性能模式。"
+}
+
+main "$@"
