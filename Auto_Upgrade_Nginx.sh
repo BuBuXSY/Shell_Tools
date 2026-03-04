@@ -265,15 +265,32 @@ download_dependencies() {
         print_msg SUCCESS "ngx_http_geoip2_module 下载完成"
     fi
 
-    # OpenSSL（使用最新 tag 而非 HEAD，更稳定）
+    # OpenSSL：锁定最新稳定 tag，避免 master HEAD 的破坏性 API 变更
+    # （OpenSSL 3.x 将 ASN1_INTEGER 改为 opaque type，Nginx OCSP Stapling
+    #  直接访问 .data/.length 在 HEAD 上会编译报错）
     if [[ ! -d "$BUILD_DIR/openssl" ]]; then
-        print_msg INFO "克隆 OpenSSL..."
-        git clone --depth=1 https://github.com/openssl/openssl.git \
-            "$BUILD_DIR/openssl" \
+        print_msg INFO "查询 OpenSSL 最新稳定 tag..."
+        # 获取最新的 openssl-3.x.y release tag（排除 alpha/beta/pre）
+        local ossl_tag
+        ossl_tag=$(git ls-remote --tags --sort="-v:refname" \
+            https://github.com/openssl/openssl.git \
+            'refs/tags/openssl-3.*' \
+            | grep -v '\^{}' \
+            | grep -v -E 'alpha|beta|pre' \
+            | head -1 \
+            | awk '{print $2}' \
+            | sed 's|refs/tags/||')
+
+        if [[ -z "$ossl_tag" ]]; then
+            print_msg WARN "无法查询 OpenSSL tag，回退到已知稳定版 openssl-3.3.2"
+            ossl_tag="openssl-3.3.2"
+        fi
+
+        print_msg INFO "使用 OpenSSL tag: $ossl_tag"
+        git clone --depth=1 --branch "$ossl_tag" \
+            https://github.com/openssl/openssl.git "$BUILD_DIR/openssl" \
             || { print_msg ERROR "克隆 OpenSSL 失败"; exit 1; }
-        local ossl_ver
-        ossl_ver=$(git -C "$BUILD_DIR/openssl" describe --tags --always 2>/dev/null || echo "latest")
-        print_msg SUCCESS "OpenSSL: $ossl_ver"
+        print_msg SUCCESS "OpenSSL 克隆完成: $ossl_tag"
     fi
 
     # zlib（先获取目录名再解压，避免 tar -t 读已删文件）
@@ -334,6 +351,20 @@ compile_and_install() {
     local version=$1
     local src_dir="$BUILD_DIR/$version"
     cd "$src_dir"
+
+    # 兼容性补丁：OpenSSL 3.x 将 ASN1_INTEGER 改为 opaque type
+    # Nginx OCSP Stapling 代码直接访问 .data/.length，需替换为公开 API
+    local stapling_src="$src_dir/src/event/ngx_event_openssl_stapling.c"
+    if grep -q "serial->data" "$stapling_src" 2>/dev/null; then
+        print_msg INFO "应用 OpenSSL 3.x ASN1_INTEGER 兼容补丁..."
+        sed -i \
+            's/serial->data/ASN1_STRING_get0_data(serial)/g' \
+            "$stapling_src"
+        sed -i \
+            's/serial->length/ASN1_STRING_length(serial)/g' \
+            "$stapling_src"
+        print_msg SUCCESS "补丁已应用"
+    fi
 
     print_msg INFO "配置编译选项..."
 
