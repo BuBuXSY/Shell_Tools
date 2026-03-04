@@ -1,196 +1,180 @@
 #!/bin/bash
 #====================================================
-# 🌉 FRP 全平台自动安装/更新 & 智能路径修正工具
-# 🚀 支持: OpenWrt, Ubuntu, RedHat, Arch, macOS
-# 🔐 Version 1.0
+# 🌉 FRP 自动升级 + Systemd 注册 v6.0
+# 🚀 自动备份 / 自动检测 / 自动服务注册
+# 👤 By: BuBuXSY
 #====================================================
 
 set -euo pipefail
 
-TMP_DIR="/tmp/frp_installer"
-GITHUB_API="https://api.github.com/repos/fatedier/frp/releases/latest"
+# =============================
+# 🎨 颜色
+# =============================
+RED="\033[31m"
+GREEN="\033[32m"
+YELLOW="\033[33m"
+CYAN="\033[36m"
+BOLD="\033[1m"
+RESET="\033[0m"
 
-RED="\033[31m"; GREEN="\033[32m"; YELLOW="\033[33m"; BLUE="\033[34m";
-CYAN="\033[36m"; BOLD="\033[1m"; RESET="\033[0m";
+log(){ echo -e "${CYAN}[信息]${RESET} $1"; }
+ok(){ echo -e "${GREEN}[成功]${RESET} $1"; }
+warn(){ echo -e "${YELLOW}[警告]${RESET} $1"; }
+err(){ echo -e "${RED}[错误]${RESET} $1"; }
 
-log() {
-    case "$1" in
-        INFO) echo -e "${CYAN}[ℹ]${RESET} $2" ;;
-        OK)   echo -e "${GREEN}[✓]${RESET} $2" ;;
-        WARN) echo -e "${YELLOW}[!]${RESET} $2" ;;
-        ERR)  echo -e "${RED}[✗]${RESET} $2" ;;
-        STEP) echo -e "${BLUE}==>${RESET} ${BOLD}$2${RESET}" ;;
-    esac
-}
+# =============================
+# 🔐 权限检查
+# =============================
+if [ "$(id -u)" != "0" ]; then
+    err "请使用 root 运行"
+    exit 1
+fi
 
-#====================
-# 环境检测
-#====================
-detect_env() {
+# =============================
+# 🖥 架构检测
+# =============================
+ARCH=$(uname -m)
+case "$ARCH" in
+    x86_64) PLATFORM="amd64" ;;
+    aarch64|arm64) PLATFORM="arm64" ;;
+    armv7*) PLATFORM="arm" ;;
+    *) err "不支持架构: $ARCH"; exit 1 ;;
+esac
 
-    if [ -f /etc/openwrt_release ]; then
-        SYS_TYPE="openwrt"
-    elif [[ "$OSTYPE" == "darwin"* ]]; then
-        SYS_TYPE="macos"
-    else
-        SYS_TYPE="linux"
-    fi
+# =============================
+# 🔥 获取最新版本
+# =============================
+get_latest() {
+    local response
+    response=$(curl -fsSL -w "\n%{http_code}" \
+        https://api.github.com/repos/fatedier/frp/releases/latest)
 
-    ARCH=$(uname -m)
-    case "$ARCH" in
-        x86_64) PLATFORM="amd64" ;;
-        aarch64|arm64) PLATFORM="arm64" ;;
-        armv7*) PLATFORM="armv7" ;;
-        *) PLATFORM="$ARCH" ;;
-    esac
+    local code
+    code=$(echo "$response" | tail -n1)
 
-    OS_TYPE_URL="linux"
-    [[ "$SYS_TYPE" == "macos" ]] && OS_TYPE_URL="darwin"
-
-    log INFO "系统: $SYS_TYPE | 架构: $PLATFORM"
-}
-
-#====================
-# 获取最新版本（安全版）
-#====================
-get_latest_release() {
-
-    log STEP "获取最新版本..."
-
-    RELEASE_JSON=$(curl -fsSL "$GITHUB_API" || true)
-
-    if [ -z "$RELEASE_JSON" ]; then
-        log ERR "无法获取 GitHub 版本信息"
+    if [ "$code" != "200" ]; then
+        err "GitHub API 请求失败"
         exit 1
     fi
 
-    LATEST_TAG=$(echo "$RELEASE_JSON" | grep '"tag_name":' | head -n1 | cut -d'"' -f4)
-
-    if [ -z "$LATEST_TAG" ]; then
-        log ERR "解析版本失败"
-        exit 1
-    fi
-
-    echo "$LATEST_TAG"
+    echo "$response" | sed '$d' | grep -m1 '"tag_name"' | cut -d'"' -f4
 }
 
-#====================
-# 安装逻辑
-#====================
-install_frp() {
+# =============================
+# 🌉 主流程
+# =============================
+echo
+echo -e "${CYAN}${BOLD}============================================${RESET}"
+echo -e "${CYAN}${BOLD}   🌉 FRP 自动管理工具 v6.0${RESET}"
+echo -e "${CYAN}${BOLD}============================================${RESET}"
 
-    echo -e "\n${BOLD}请选择角色：${RESET}"
-    echo "1) frpc"
-    echo "2) frps"
-    read -p "选择: " CHOICE
+read -p "请选择角色 (1=frpc / 2=frps): " CHOICE
 
-    [[ "$CHOICE" == "1" ]] && ROLE="frpc" || ROLE="frps"
+if [ "$CHOICE" = "1" ]; then
+    ROLE="frpc"
+else
+    ROLE="frps"
+fi
 
-    INSTALL_DIR="/usr/local/bin"
-    [[ "$SYS_TYPE" == "openwrt" ]] && INSTALL_DIR="/usr/bin"
+log "检测已安装版本..."
 
-    CONF_DIR="/etc/frp"
-    [[ "$SYS_TYPE" == "macos" ]] && CONF_DIR="/usr/local/etc/frp"
+if command -v $ROLE >/dev/null 2>&1; then
+    CURRENT_VERSION=$($ROLE -v 2>/dev/null || echo "未知")
+    warn "当前版本: $CURRENT_VERSION"
+else
+    warn "未检测到已安装版本"
+fi
 
-    mkdir -p "$TMP_DIR" "$CONF_DIR"
+LATEST_TAG="$(get_latest)"
+VERSION="${LATEST_TAG#v}"
 
-    LATEST_TAG=$(get_latest_release)
+ok "最新版本: $LATEST_TAG"
 
-    FILE_NAME="frp_${LATEST_TAG#v}_${OS_TYPE_URL}_${PLATFORM}.tar.gz"
-    URL="https://github.com/fatedier/frp/releases/download/${LATEST_TAG}/${FILE_NAME}"
+# =============================
+# 📦 自动备份
+# =============================
+BACKUP_DIR="/var/backups/frp"
+mkdir -p "$BACKUP_DIR"
 
-    log INFO "下载 $FILE_NAME"
+if command -v $ROLE >/dev/null 2>&1; then
+    cp "$(which $ROLE)" "$BACKUP_DIR/${ROLE}_$(date +%Y%m%d_%H%M%S).bak"
+    ok "已备份旧版本"
+fi
 
-    curl -fL -o "$TMP_DIR/frp.tar.gz" "$URL"
+# =============================
+# ⬇ 下载新版本
+# =============================
+FILE="frp_${VERSION}_linux_${PLATFORM}.tar.gz"
+URL="https://github.com/fatedier/frp/releases/download/${LATEST_TAG}/${FILE}"
 
-    # 解压
-    tar -xzf "$TMP_DIR/frp.tar.gz" -C "$TMP_DIR" --strip-components=1
+log "下载: $FILE"
 
-    # ===== 备份旧版本 =====
-    if [ -f "$INSTALL_DIR/$ROLE" ]; then
-        cp "$INSTALL_DIR/$ROLE" "$INSTALL_DIR/${ROLE}.bak"
-        log OK "已备份旧版本"
-    fi
+cd /tmp
+rm -rf frp_temp
+mkdir frp_temp
+cd frp_temp
 
-    # 部署
-    chmod +x "$TMP_DIR/$ROLE"
-    mv "$TMP_DIR/$ROLE" "$INSTALL_DIR/$ROLE"
+curl -fL -o frp.tar.gz "$URL"
+tar -xzf frp.tar.gz
 
-    # 配置文件
-    CONF_FILE="$CONF_DIR/${ROLE}.toml"
+# =============================
+# 🚀 安装二进制
+# =============================
+INSTALL_DIR="/usr/local/bin"
+cp "frp_${VERSION}_linux_${PLATFORM}/$ROLE" "$INSTALL_DIR/"
+chmod +x "$INSTALL_DIR/$ROLE"
 
-    if [ ! -f "$CONF_FILE" ]; then
-        cp "$TMP_DIR/${ROLE}.toml" "$CONF_FILE"
-        log OK "已生成默认配置"
-    else
-        log WARN "配置已存在，未覆盖"
-    fi
+ok "二进制文件更新完成"
 
-    register_service
-}
+# =============================
+# ⚙ 自动 systemd 注册
+# =============================
+SERVICE_FILE="/etc/systemd/system/${ROLE}.service"
 
-#====================
-# 服务注册
-#====================
-register_service() {
+if [ ! -f "$SERVICE_FILE" ]; then
+    log "创建 systemd 服务..."
 
-    if [[ "$SYS_TYPE" == "linux" ]]; then
-
-        if command -v systemctl >/dev/null 2>&1; then
-
-            SERVICE="/etc/systemd/system/$ROLE.service"
-
-            cat > "$SERVICE" <<EOF
+    cat > "$SERVICE_FILE" <<EOF
 [Unit]
-Description=FRP $ROLE
+Description=FRP $ROLE Service
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=$INSTALL_DIR/$ROLE -c $CONF_FILE
+ExecStart=$INSTALL_DIR/$ROLE -c /etc/frp/${ROLE}.toml
 Restart=on-failure
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-            systemctl daemon-reload
-            systemctl enable "$ROLE"
-            systemctl restart "$ROLE"
+    systemctl daemon-reload
+    systemctl enable $ROLE
+    ok "systemd 服务已创建"
+else
+    warn "检测到已有 systemd 服务，已保留"
+fi
 
-            # 健康检查
-            sleep 2
-            if systemctl is-active --quiet "$ROLE"; then
-                log OK "$ROLE 启动成功"
-            else
-                log ERR "启动失败，执行回滚"
-                rollback
-            fi
-        fi
-    fi
-}
+# =============================
+# 📁 配置文件保护
+# =============================
+CONF_DIR="/etc/frp"
+mkdir -p "$CONF_DIR"
 
-#====================
-# 回滚机制
-#====================
-rollback() {
+if [ ! -f "$CONF_DIR/${ROLE}.toml" ] && [ ! -f "$CONF_DIR/${ROLE}.ini" ]; then
+    warn "未检测到配置文件，请手动配置"
+else
+    ok "配置文件已保留未覆盖"
+fi
 
-    if [ -f "$INSTALL_DIR/${ROLE}.bak" ]; then
-        mv "$INSTALL_DIR/${ROLE}.bak" "$INSTALL_DIR/$ROLE"
-        systemctl restart "$ROLE" || true
-        log WARN "已回滚到旧版本"
-    fi
+# =============================
+# 🔄 重启服务
+# =============================
+systemctl restart $ROLE 2>/dev/null || true
 
-    exit 1
-}
+ok "FRP 安装/升级完成 🎉"
 
-#====================
-# 主流程
-#====================
-clear
-echo -e "${CYAN}================================================${RESET}"
-echo -e "${CYAN}     🌉 FRP 全系统自适应安装工具 企业增强版     ${RESET}"
-echo -e "${CYAN}================================================${RESET}"
-
-detect_env
-install_frp
+echo
+echo -e "${GREEN}备份目录: $BACKUP_DIR${RESET}"
+echo -e "${GREEN}服务管理: systemctl {start|stop|restart} $ROLE${RESET}"
