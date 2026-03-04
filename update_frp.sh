@@ -1,8 +1,7 @@
 #!/bin/sh
 #====================================================
 # 🌉 FRP 自动安装 & 更新脚本（OpenWrt / Linux 兼容）
-# 🚀 支持 frps / frpc
-# 🟢 彩色日志 + emoji 提示
+# 🚀 支持 frps / frpc | 修复了 404 及路径匹配问题
 #====================================================
 
 set -e
@@ -52,6 +51,7 @@ detect_system() {
         aarch64) PLATFORM="arm64" ;;
         armv7*|armv6*) PLATFORM="armv7" ;;
         mips*) PLATFORM="mips" ;;
+        i386|i686) PLATFORM="386" ;;
         *) PLATFORM="$ARCH" ;;
     esac
     log INFO "Arch detected: $ARCH -> $PLATFORM"
@@ -68,7 +68,7 @@ detect_fetcher() {
     elif [ "$IS_OPENWRT" -eq 1 ] && command_exists uclient-fetch; then
         FETCH_CMD="uclient-fetch -O"
     else
-        log ERR "No suitable downloader found (curl/wget/uclient-fetch)"
+        log ERR "No downloader found (curl/wget/uclient-fetch)"
         exit 1
     fi
 }
@@ -78,70 +78,116 @@ detect_fetcher() {
 #====================
 get_latest_version() {
     log INFO "Fetching latest FRP version..."
-    if command_exists curl; then
-        LATEST_VERSION=$(curl -s "$GITHUB_API" | grep '"tag_name":' | head -n1 | cut -d'"' -f4)
-        log OK "Latest version: $LATEST_VERSION"
-    else
-        log ERR "curl required to fetch latest version"
+    # 提取 Tag 名
+    LATEST_TAG=$(curl -s "$GITHUB_API" | grep '"tag_name":' | head -n1 | cut -d'"' -f4)
+    if [ -z "$LATEST_TAG" ]; then
+        log ERR "Failed to fetch version from GitHub API"
         exit 1
     fi
+    # 提取纯数字版本号 用于文件名拼接
+    LATEST_VER_NUM=$(echo "$LATEST_TAG" | sed 's/^v//')
+    log OK "Latest version found: $LATEST_TAG"
 }
 
 #====================
 # 下载 FRP
 #====================
 download_frp() {
-    mkdir -p "$TMP_DIR"
-    TAR_FILE="$TMP_DIR/frp_${LATEST_VERSION}_linux_${PLATFORM}.tar.gz"
-    URL="https://github.com/fatedier/frp/releases/download/${LATEST_VERSION}/$(basename "$TAR_FILE")"
-    log INFO "Downloading FRP package..."
-    $FETCH_CMD "$TAR_FILE" "$URL"
-    log OK "Download completed: $(basename "$TAR_FILE")"
+    rm -rf "$TMP_DIR" && mkdir -p "$TMP_DIR"
+    # 文件名不带 v，但下载路径的 Tag 带 v
+    FILE_NAME="frp_${LATEST_VER_NUM}_linux_${PLATFORM}.tar.gz"
+    TAR_FILE="$TMP_DIR/$FILE_NAME"
+    URL="https://github.com/fatedier/frp/releases/download/${LATEST_TAG}/${FILE_NAME}"
+    
+    log INFO "Downloading from: $URL"
+    if ! $FETCH_CMD "$TAR_FILE" "$URL"; then
+        log ERR "Download failed! Please check your network or architecture."
+        exit 1
+    fi
+    log OK "Download completed."
 }
 
 #====================
 # 安装 FRP
 #====================
 install_frp() {
-    read -rp "Install frps or frpc? [frps/frpc]: " ROLE
+    printf "${YELLOW}[?] Install frps (Server) or frpc (Client)? [frps/frpc]: ${RESET}"
+    read -r ROLE
     ROLE=$(echo "$ROLE" | tr '[:upper:]' '[:lower:]')
+    
     if [ "$ROLE" != "frps" ] && [ "$ROLE" != "frpc" ]; then
-        log ERR "Invalid role"
+        log ERR "Invalid role: $ROLE. Use 'frps' or 'frpc'."
         exit 1
     fi
 
-    tar -xzf "$TAR_FILE" -C "$TMP_DIR"
-    BIN="$TMP_DIR/$ROLE"
-    chmod +x "$BIN"
-    mv "$BIN" /usr/bin/"$ROLE"
+    log INFO "Extracting package..."
+    # --strip-components=1 直接把文件夹里的内容解压出来，不保留那层带版本号的目录
+    tar -xzf "$TAR_FILE" -C "$TMP_DIR" --strip-components=1
 
-    mkdir -p /etc/frp
-    if [ ! -f /etc/frp/${ROLE}.toml ]; then
-        cp "$TMP_DIR/${ROLE}.example.toml" /etc/frp/${ROLE}.toml
+    BIN_SRC="$TMP_DIR/$ROLE"
+    if [ ! -f "$BIN_SRC" ]; then
+        log ERR "Binary $ROLE not found in extracted files."
+        exit 1
     fi
 
+    chmod +x "$BIN_SRC"
+    mv "$BIN_SRC" /usr/bin/"$ROLE"
+    log OK "Binary moved to /usr/bin/$ROLE"
+
+    # 配置文件处理
+    mkdir -p /etc/frp
+    # 优先找 .toml (新版)，找不到再找旧版的 .ini (兼容旧版本包)
+    CONF_EXAMPLE=""
+    [ -f "$TMP_DIR/${ROLE}.toml" ] && CONF_EXAMPLE="$TMP_DIR/${ROLE}.toml"
+    [ -f "$TMP_DIR/${ROLE}.ini" ] && [ -z "$CONF_EXAMPLE" ] && CONF_EXAMPLE="$TMP_DIR/${ROLE}.ini"
+
+    CONF_DEST="/etc/frp/${ROLE}.toml"
+    # 如果是旧版 .ini 后缀
+    if echo "$CONF_EXAMPLE" | grep -q "\.ini$"; then CONF_DEST="/etc/frp/${ROLE}.ini"; fi
+
+    if [ ! -f "$CONF_DEST" ]; then
+        cp "$CONF_EXAMPLE" "$CONF_DEST"
+        log OK "Created default config at $CONF_DEST"
+    else
+        log WARN "Config $CONF_DEST already exists, skipping overwrite."
+    fi
+
+    #====================
+    # 服务启动逻辑
+    #====================
     if [ "$IS_OPENWRT" -eq 1 ]; then
         SERVICE_PATH="/etc/init.d/$ROLE"
+        log INFO "Configuring OpenWrt procd service..."
         cat > "$SERVICE_PATH" <<EOF
 #!/bin/sh /etc/rc.common
-# FRP $ROLE service
 START=99
 USE_PROCD=1
-start_service() { procd_open_instance; procd_set_param command /usr/bin/$ROLE -c /etc/frp/$ROLE.toml; procd_close_instance; }
+
+start_service() {
+    procd_open_instance
+    procd_set_param command /usr/bin/$ROLE -c $CONF_DEST
+    procd_set_param respawn
+    procd_set_param stdout 1
+    procd_set_param stderr 1
+    procd_close_instance
+}
 EOF
         chmod +x "$SERVICE_PATH"
         /etc/init.d/$ROLE enable
         /etc/init.d/$ROLE restart
     else
         SERVICE_PATH="/etc/systemd/system/$ROLE.service"
+        log INFO "Configuring Systemd service..."
         cat > "$SERVICE_PATH" <<EOF
 [Unit]
 Description=FRP $ROLE Service
 After=network.target
 
 [Service]
-ExecStart=/usr/bin/$ROLE -c /etc/frp/$ROLE.toml
+Type=simple
+ExecStart=/usr/bin/$ROLE -c $CONF_DEST
 Restart=on-failure
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
@@ -151,16 +197,21 @@ EOF
         systemctl restart "$ROLE"
     fi
 
-    log OK "$ROLE installed and service started!"
+    log OK "$ROLE Service is now running!"
 }
 
 #====================
-# Main
+# Main Execution
 #====================
+clear
+echo -e "${BOLD}${BLUE}🌉 FRP Auto Installer / Updater${RESET}"
+echo "------------------------------------------------"
+
 detect_system
 detect_fetcher
 get_latest_version
 download_frp
 install_frp
 
-log OK "🌉 FRP setup completed!"
+echo "------------------------------------------------"
+log OK "FRP setup completed! Enjoy your tunnel."
