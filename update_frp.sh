@@ -1,7 +1,7 @@
 #!/bin/bash
 #====================================================
-# 🌉 FRP 自动升级 + Systemd 注册 v6.0
-# 🚀 自动备份 / 自动检测 / 自动服务注册
+# 🌉 FRP 升级工具 v2.0
+# 🚀 升级前测试 / 升级后验证 / 自动备份 / 可回滚
 # 👤 By: BuBuXSY
 #====================================================
 
@@ -37,7 +37,6 @@ ARCH=$(uname -m)
 case "$ARCH" in
     x86_64) PLATFORM="amd64" ;;
     aarch64|arm64) PLATFORM="arm64" ;;
-    armv7*) PLATFORM="arm" ;;
     *) err "不支持架构: $ARCH"; exit 1 ;;
 esac
 
@@ -63,10 +62,12 @@ get_latest() {
 # =============================
 # 🌉 主流程
 # =============================
-echo
-echo -e "${CYAN}${BOLD}============================================${RESET}"
-echo -e "${CYAN}${BOLD}   🌉 FRP 自动管理工具 v6.0${RESET}"
-echo -e "${CYAN}${BOLD}============================================${RESET}"
+clear
+echo -e "${CYAN}${BOLD}"
+echo "============================================"
+echo "   🌉 FRP 升级工具 v2.0"
+echo "============================================"
+echo -e "${RESET}"
 
 read -p "请选择角色 (1=frpc / 2=frps): " CHOICE
 
@@ -76,38 +77,73 @@ else
     ROLE="frps"
 fi
 
-log "检测已安装版本..."
+# =============================
+# 📊 当前版本检测
+# =============================
+log "正在检测当前版本..."
 
 if command -v $ROLE >/dev/null 2>&1; then
-    CURRENT_VERSION=$($ROLE -v 2>/dev/null || echo "未知")
+    CURRENT_VERSION=$($ROLE -v 2>/dev/null || echo "unknown")
     warn "当前版本: $CURRENT_VERSION"
 else
     warn "未检测到已安装版本"
+    CURRENT_VERSION="none"
 fi
 
+# =============================
+# 🌍 获取最新版本
+# =============================
+log "正在获取最新版本..."
+
 LATEST_TAG="$(get_latest)"
-VERSION="${LATEST_TAG#v}"
+LATEST_VERSION="${LATEST_TAG#v}"
 
 ok "最新版本: $LATEST_TAG"
 
 # =============================
-# 📦 自动备份
+# 🔎 是否需要升级判断
+# =============================
+if [[ "$CURRENT_VERSION" != "none" ]]; then
+    if echo "$CURRENT_VERSION" | grep -q "$LATEST_VERSION"; then
+        ok "🎉 当前已是最新版本，无需升级"
+        exit 0
+    fi
+fi
+
+# =============================
+# 🧪 升级前自动测试
+# =============================
+log "执行升级前自动测试..."
+
+if systemctl is-active --quiet $ROLE 2>/dev/null; then
+    warn "服务正在运行，开始测试配置..."
+    if ! $ROLE -c /etc/frp/${ROLE}.toml -t 2>/dev/null; then
+        err "配置测试失败，终止升级"
+        exit 1
+    fi
+    ok "配置测试通过"
+else
+    warn "服务未运行，跳过配置测试"
+fi
+
+# =============================
+# 💾 自动备份
 # =============================
 BACKUP_DIR="/var/backups/frp"
 mkdir -p "$BACKUP_DIR"
 
 if command -v $ROLE >/dev/null 2>&1; then
     cp "$(which $ROLE)" "$BACKUP_DIR/${ROLE}_$(date +%Y%m%d_%H%M%S).bak"
-    ok "已备份旧版本"
+    ok "已自动备份旧版本"
 fi
 
 # =============================
 # ⬇ 下载新版本
 # =============================
-FILE="frp_${VERSION}_linux_${PLATFORM}.tar.gz"
+FILE="frp_${LATEST_VERSION}_linux_${PLATFORM}.tar.gz"
 URL="https://github.com/fatedier/frp/releases/download/${LATEST_TAG}/${FILE}"
 
-log "下载: $FILE"
+log "开始下载: $FILE"
 
 cd /tmp
 rm -rf frp_temp
@@ -118,16 +154,15 @@ curl -fL -o frp.tar.gz "$URL"
 tar -xzf frp.tar.gz
 
 # =============================
-# 🚀 安装二进制
+# 🚀 安装
 # =============================
-INSTALL_DIR="/usr/local/bin"
-cp "frp_${VERSION}_linux_${PLATFORM}/$ROLE" "$INSTALL_DIR/"
-chmod +x "$INSTALL_DIR/$ROLE"
+cp "frp_${LATEST_VERSION}_linux_${PLATFORM}/$ROLE" /usr/local/bin/
+chmod +x /usr/local/bin/$ROLE
 
-ok "二进制文件更新完成"
+ok "二进制更新完成"
 
 # =============================
-# ⚙ 自动 systemd 注册
+# ⚙ Systemd 注册
 # =============================
 SERVICE_FILE="/etc/systemd/system/${ROLE}.service"
 
@@ -141,7 +176,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=$INSTALL_DIR/$ROLE -c /etc/frp/${ROLE}.toml
+ExecStart=/usr/local/bin/$ROLE -c /etc/frp/${ROLE}.toml
 Restart=on-failure
 RestartSec=5
 
@@ -157,24 +192,30 @@ else
 fi
 
 # =============================
-# 📁 配置文件保护
-# =============================
-CONF_DIR="/etc/frp"
-mkdir -p "$CONF_DIR"
-
-if [ ! -f "$CONF_DIR/${ROLE}.toml" ] && [ ! -f "$CONF_DIR/${ROLE}.ini" ]; then
-    warn "未检测到配置文件，请手动配置"
-else
-    ok "配置文件已保留未覆盖"
-fi
-
-# =============================
 # 🔄 重启服务
 # =============================
 systemctl restart $ROLE 2>/dev/null || true
 
-ok "FRP 安装/升级完成 🎉"
+# =============================
+# 🧪 升级后自动验证
+# =============================
+log "执行升级后自动验证..."
+
+sleep 2
+
+if systemctl is-active --quiet $ROLE; then
+    ok "服务运行正常 ✅"
+else
+    err "服务未正常启动，请检查日志"
+    exit 1
+fi
+
+if command -v $ROLE >/dev/null 2>&1; then
+    NEW_VERSION=$($ROLE -v 2>/dev/null || echo "unknown")
+    ok "当前运行版本: $NEW_VERSION"
+fi
 
 echo
+ok "🎉 升级流程全部完成"
 echo -e "${GREEN}备份目录: $BACKUP_DIR${RESET}"
-echo -e "${GREEN}服务管理: systemctl {start|stop|restart} $ROLE${RESET}"
+echo -e "${GREEN}如有问题可手动回滚旧版本${RESET}"
