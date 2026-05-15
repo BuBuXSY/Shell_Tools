@@ -22,50 +22,61 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 # ====================================================
+# 📊 服务器状态企业微信推送脚本
+# 功能：采集 CPU、内存、磁盘、网络、进程和运行时间并推送企业微信
 # By: BuBuXSY
 # Version: 2025-07-03
+# ====================================================
 
+set -euo pipefail
 
-######################################################################################
-WEBHOOK_URL="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=你的企业微信机器人KEY"
-######################################################################################
+# ===== 🎨 色彩输出 =====
+GREEN="\e[32m"
+YELLOW="\e[33m"
+RED="\e[31m"
+BLUE="\e[34m"
+RESET="\e[0m"
 
+log_info() { echo -e "${BLUE}ℹ️  $1${RESET}"; }
+log_ok() { echo -e "${GREEN}✅ $1${RESET}"; }
+log_warn() { echo -e "${YELLOW}⚠️  $1${RESET}"; }
+log_error() { echo -e "${RED}❌ $1${RESET}"; }
 
+WEBHOOK_URL="${WEBHOOK_URL:-${WECHAT_WEBHOOK_URL:-}}"
 CACHE_FILE="/tmp/server_net_stat.cache"
 LOG_FILE="/tmp/server_net_stat.log"
 CURRENT_TIME=$(date +"%Y-%m-%d %H:%M:%S")
-CACHE_TIMEOUT=3600  # 缓存过期时间，单位：秒（1小时）
+CACHE_TIMEOUT=3600
 
 log() {
   echo "[$(date +"%Y-%m-%d %H:%M:%S")] $1" >> "$LOG_FILE"
 }
 
-# 获取公网 IP 和地理信息
-IP_INFO_RAW=$(curl -s http://myip.ipip.net)
-CURL_STATUS=$?
-
-if [[ "$CURL_STATUS" -ne 0 ]]; then
-    log "Curl failed with status: $CURL_STATUS"
-    IP_INFO_RAW="" # 确保为空，触发未知
+if [[ -z "$WEBHOOK_URL" || "$WEBHOOK_URL" == *"你的"* ]]; then
+  log "Webhook is not configured. Set WEBHOOK_URL or WECHAT_WEBHOOK_URL."
+  log_warn "📣 未配置 webhook，已取消推送。请设置 WEBHOOK_URL 或 WECHAT_WEBHOOK_URL。"
+  exit 0
 fi
 
+IP_INFO_RAW=$(curl -fsS http://myip.ipip.net 2>/dev/null || true)
 PUBLIC_IP=$(echo "$IP_INFO_RAW" | sed -n 's/.*IP：\([0-9\.]*\).*/\1/p')
 LOCATION=$(echo "$IP_INFO_RAW" | sed -n 's/.*来自于：\(.*\)$/\1/p')
 
 [[ -z "$PUBLIC_IP" ]] && PUBLIC_IP="未知"
 [[ -z "$LOCATION" ]] && LOCATION="未知"
 
-# 获取默认网卡接口（自动选择流量最大的网卡）
-NET_INTERFACE=$(ip route get 1.1.1.1 2>/dev/null | awk '{print $5; exit}')
+NET_INTERFACE=$(ip route get 1.1.1.1 2>/dev/null | awk '{print $5; exit}' || true)
 [[ -z "$NET_INTERFACE" ]] && NET_INTERFACE="eth0"
 
-# 网络流量统计
-RX_NOW=$(cat /sys/class/net/${NET_INTERFACE}/statistics/rx_bytes 2>/dev/null || echo 0)
-TX_NOW=$(cat /sys/class/net/${NET_INTERFACE}/statistics/tx_bytes 2>/dev/null || echo 0)
+RX_NOW=$(cat "/sys/class/net/${NET_INTERFACE}/statistics/rx_bytes" 2>/dev/null || echo 0)
+TX_NOW=$(cat "/sys/class/net/${NET_INTERFACE}/statistics/tx_bytes" 2>/dev/null || echo 0)
 NOW_EPOCH=$(date +%s)
 
 if [[ -f "$CACHE_FILE" ]]; then
-  read LAST_EPOCH LAST_RX LAST_TX < "$CACHE_FILE"
+  read -r LAST_EPOCH LAST_RX LAST_TX < "$CACHE_FILE" || true
+  LAST_EPOCH="${LAST_EPOCH:-$NOW_EPOCH}"
+  LAST_RX="${LAST_RX:-$RX_NOW}"
+  LAST_TX="${LAST_TX:-$TX_NOW}"
 else
   LAST_EPOCH=$NOW_EPOCH
   LAST_RX=$RX_NOW
@@ -73,7 +84,6 @@ else
 fi
 
 TIME_DIFF=$((NOW_EPOCH - LAST_EPOCH))
-# 如果缓存超过设定的超时时间，强制更新
 if [[ "$TIME_DIFF" -gt "$CACHE_TIMEOUT" ]]; then
   log "Cache expired, refreshing data..."
   RX_RATE=0
@@ -88,28 +98,22 @@ fi
 
 echo "$NOW_EPOCH $RX_NOW $TX_NOW" > "$CACHE_FILE"
 
-# CPU 负载
-read CPU1 CPU5 CPU15 <<<$(uptime | awk -F 'load average:' '{print $2}' | tr -d ',')
+read -r CPU1 CPU5 CPU15 <<< "$(uptime | awk -F 'load average:' '{print $2}' | tr -d ',')"
 
-# 内存状态
 MEM_TOTAL=$(free -m | awk '/Mem:/ {print $2}')
 MEM_USED=$(free -m | awk '/Mem:/ {print $3}')
 MEM_BUFF_CACHE=$(free -m | awk '/Mem:/ {print $6}')
 MEM_AVAILABLE=$(free -m | awk '/Mem:/ {print $7}')
 MEM_USAGE=$(( MEM_USED * 100 / MEM_TOTAL ))
 
-# 磁盘使用
 DISK_INFO=$(df -h --output=target,pcent | tail -n +2 | awk '{print $1" "$2}' | paste -sd ", " -)
 
-# Top3 CPU 占用进程
 TOP_PROC=$(ps -eo pid,pcpu,comm --sort=-pcpu | head -n 4 | tail -n 3 | \
   awk '{printf "PID:%s CPU:%.1f%% CMD:%s\n", $1,$2,$3}')
 
-# 系统运行时间
 UPTIME=$(uptime -p)
 
-# 构建消息 payload
-read -r -d '' PAYLOAD <<EOF
+PAYLOAD=$(cat <<EOF
 {
   "msgtype": "text",
   "text": {
@@ -117,11 +121,13 @@ read -r -d '' PAYLOAD <<EOF
   }
 }
 EOF
+)
 
-# 推送消息
-curl -s -X POST -H "Content-Type: application/json" -d "$PAYLOAD" "$WEBHOOK_URL" > /dev/null
-if [[ $? -eq 0 ]]; then
+if curl -fsS -X POST -H "Content-Type: application/json" -d "$PAYLOAD" "$WEBHOOK_URL" > /dev/null; then
   log "Status report sent successfully."
+  log_ok "📡 状态报告发送成功。"
 else
   log "Failed to send status report."
+  log_error "📡 状态报告发送失败。"
+  exit 1
 fi

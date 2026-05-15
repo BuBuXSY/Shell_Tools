@@ -1,0 +1,24 @@
+name: 🧪 Shell Tools Lint
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  lint:
+    name: ✅ Shell / Userscript Self Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🔧 Ensure executable bits
+        run: chmod +x ./*.sh
+
+      - name: 🧪 Run repository self check
+        run: ./shell_tools_lint.sh

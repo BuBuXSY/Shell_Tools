@@ -1,7 +1,8 @@
 // ==UserScript==
-// @name              Mactype助手增强版 (Edge优化)
+// @name              ✨ Mactype助手增强版 (Edge优化)
 // @version           1.0.0
-// @description       专为Microsoft Edge优化的Windows字体渲染增强工具，支持多种渲染方式、自定义字体、预设方案等高级功能
+// @date              2025-07-19
+// @description       🎨 专为Microsoft Edge优化的Windows字体渲染增强工具，支持多种渲染方式、自定义字体、预设方案等高级功能
 // @author            BuBuXSY
 // @license           MIT
 // @compatible        edge Microsoft Edge 完全兼容

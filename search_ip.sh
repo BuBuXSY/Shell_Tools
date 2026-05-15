@@ -22,83 +22,93 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 # ====================================================
+# 🔍 Nginx 高频 DNS 访问 IP 分析脚本
+# 功能：从 Nginx access.log 中提取高频 DNS 访问 IP，查询归属地并可选推送企业微信
 # By: BuBuXSY
 # Version: 2025-07-16
+# ====================================================
 
+set -euo pipefail
 
+# ===== 🎨 色彩输出 =====
+GREEN="\e[32m"
+YELLOW="\e[33m"
+RED="\e[31m"
+BLUE="\e[34m"
+CYAN="\e[36m"
+RESET="\e[0m"
 
-# ========== 配置 ==========
+log_info() { echo -e "${BLUE}ℹ️  $1${RESET}"; }
+log_ok() { echo -e "${GREEN}✅ $1${RESET}"; }
+log_warn() { echo -e "${YELLOW}⚠️  $1${RESET}"; }
+log_error() { echo -e "${RED}❌ $1${RESET}"; }
+
 file_path="/var/log/nginx/access.log"
-###########################################################################
-webhook_url="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=你的KEY"#
-###########################################################################
-cache_file="/tmp/nali_cache.txt"  # 缓存文件
+webhook_url="${WEBHOOK_URL:-${WECHAT_WEBHOOK_URL:-}}"
+cache_file="/tmp/nali_cache.txt"
 
-# ========== 检查文件 ==========
+if [[ -z "$webhook_url" || "$webhook_url" == *"你的KEY"* ]]; then
+    webhook_url=""
+fi
+
 if [[ ! -f "$file_path" ]]; then
-    echo "❌ 日志文件不存在：$file_path"
+    log_error "📄 日志文件不存在：$file_path"
     exit 1
 fi
 
-# ========== 提取并统计 IP ==========
-echo "📊 提取包含 'dns' 的 IP 并统计频率..."
+mkdir -p "$(dirname "$cache_file")"
+touch "$cache_file"
 
-ip_list=$(grep -E "dns" "$file_path" | grep -oE "\b([0-9]{1,3}\.){3}[0-9]{1,3}\b" | awk '!/0\.0\.0/ { ips[$0]++ } END { for (ip in ips) print ip, ips[ip] }')
+log_info "📊🔍 提取包含 'dns' 的 IP 并统计频率..."
+
+ip_list=$(grep -E "dns" "$file_path" | grep -oE '\b([0-9]{1,3}\.){3}[0-9]{1,3}\b' | awk '!/0\.0\.0/ { ips[$0]++ } END { for (ip in ips) print ip, ips[ip] }' || true)
 
 if [[ -z "$ip_list" ]]; then
-    echo "⚠️ 没有找到包含 'dns' 的 IP 记录。"
+    log_warn "🫥 没有找到包含 'dns' 的 IP 记录。"
     exit 0
 fi
 
 sorted_ips=$(echo "$ip_list" | sort -k2 -nr)
 readarray -t ip_array <<< "$sorted_ips"
 
-# ========== 构建消息 ==========
-echo "📋 以下为 DNS 查询频次较高的 IP："
+log_info "📋🚀 以下为 DNS 查询频次较高的 IP："
 message="📊 *高频 DNS 查询 IP 报告*\n🕒 时间：$(date '+%F %T')"
 
 for ip in "${ip_array[@]}"; do
     ip_address=$(echo "$ip" | awk '{print $1}')
     count=$(echo "$ip" | awk '{print $2}')
-    
-    echo "正在查询 IP：$ip_address"
 
-    # 缓存查询的地理位置信息
-    location=$(grep -w "$ip_address" "$cache_file" | awk '{print $2}')
+    log_info "🔎 正在查询 IP：$ip_address"
+
+    location=$(awk -F '\t' -v ip="$ip_address" '$1 == ip { $1=""; sub(/^\t/, ""); print; exit }' "$cache_file" || true)
     if [[ -z "$location" ]]; then
-        # 调试输出 nali 查询结果
-        echo "查询 IP 地址的地理信息：$ip_address"
-        location=$(nali "$ip_address" 2>/dev/null)
-
-        # 输出 nali 原始返回值，用于调试
-        echo "nali 输出：$location"
-
-        if [[ -z "$location" ]]; then
-            location="未知"
-        else
-            # 提取括号内的地理位置（移除 IP 地址）
-            location=$(echo "$location" | sed -E 's/.*\[(.*)\].*/\1/')
-            echo "提取后的地理位置：$location"
+        if command -v nali >/dev/null 2>&1; then
+            location=$(nali "$ip_address" 2>/dev/null || true)
+            if [[ -n "$location" ]]; then
+                location=$(echo "$location" | sed -E 's/^.*\[(.*)\].*$/\1/')
+            fi
         fi
 
-        echo "$ip_address $location" >> "$cache_file"
+        [[ -z "$location" ]] && location="未知"
+        printf '%s\t%s\n' "$ip_address" "$location" >> "$cache_file"
     fi
 
-    echo "IP: $ip_address 频次: $count 位置: $location"
+    log_ok "📍 IP: $ip_address 频次: $count 位置: $location"
     message+="\n📌 ${ip_address}（$location） - $count 次"
 done
 
-# ========== 推送企业微信 ==========
-echo "📤 推送报告到企业微信..."
+if [[ -z "$webhook_url" ]]; then
+    log_warn "📣 未配置 webhook，已输出本地报告，未执行推送。"
+    exit 0
+fi
+
+log_info "📤🚀 推送报告到企业微信..."
 safe_message=$(echo "$message" | sed ':a;N;$!ba;s/\n/\\n/g' | sed 's/"/\\"/g')
 json="{\"msgtype\":\"text\",\"text\":{\"content\":\"【DNS 查询高频 IP 报告】\\n$safe_message\"}}"
 
-curl -s -X POST "$webhook_url" \
-    -H 'Content-Type: application/json' \
-    -d "$json" >/dev/null
-
-if [[ $? -eq 0 ]]; then
-    echo "✅ 推送成功！"
+if curl -fsS -X POST "$webhook_url" -H 'Content-Type: application/json' -d "$json" >/dev/null; then
+    log_ok "🎉 推送成功！"
 else
-    echo "❌ 推送失败，请检查 webhook！"
+    log_error "🔥 推送失败，请检查 webhook！"
+    exit 1
 fi

@@ -1,419 +1,141 @@
-# 🚀 Linux 脚本工具集
+# 🚀 Shell_Tools 脚本工具箱
 
-> 🎯 **把复杂的东西简单化**
+> 🎯 把常用 Linux 运维、网络诊断、Nginx、SSL、FRP、GeoIP 和浏览器字体优化脚本集中管理。
 
-[![Tools](https://img.shields.io/badge/工具数量-9+-blue.svg)](README.md) [![Platform](https://img.shields.io/badge/平台-Linux-green.svg)](README.md) [![License](https://img.shields.io/badge/许可证-MIT-orange.svg)](LICENSE)
+[![Tools](https://img.shields.io/badge/工具数量-18+-blue.svg)](README.md)
+[![Platform](https://img.shields.io/badge/平台-Linux%20%7C%20OpenWrt-green.svg)](README.md)
+[![License](https://img.shields.io/badge/许可证-MIT-orange.svg)](LICENSE)
 
-## 🎪 工具概览
+## 🎪 工具总览
 
-| 🔧 工具类型 | 📊 工具数量 | 🎯 主要用途 |
-|------------|-----------|-----------|
-| 🛠️ 系统优化 | 1个 | 内核参数调优 |
-| 🌐 Web服务 | 3个 | Nginx + SSL + GeoIP |
-| 🔍 监控分析 | 3个 | IP分析 + 状态监控 + DNS优化 |
-| 🚀 网络工具 | 2个 | 内网穿透 + DoH测试 |
-
----
-
-## 🛠️ 系统优化类
-
-# Linux内核优化脚本 v2.0
-
-一键优化Linux内核参数，提升服务器性能的自动化脚本。
-
-## 功能特点
-
-- 🚀 **一键优化**：针对Web、数据库、代理服务器等不同场景
-- 📊 **参数对比**：清晰显示优化前后的参数变化
-- 🔄 **安全回滚**：自动备份，支持一键恢复
-- 🎯 **智能适配**：自动检测系统版本和环境
-- 🔍 **BBR检测**：检测内核版本和BBR支持状态，显示当前拥塞控制算法
-
-## 支持系统
-
-- Ubuntu, Debian, CentOS, RHEL, Fedora, Arch Linux
-- 内核版本 >= 3.10
-- 需要 root 权限
-
-## 安装使用
-
-```bash
-# 下载脚本
-wget https://raw.githubusercontent.com/your-repo/optimize.sh
-chmod +x optimize.sh
-
-# 运行脚本
-sudo ./optimize.sh
-```
-
-## 快速命令
-
-```bash
-# VPS代理服务器优化（推荐）
-sudo ./optimize.sh --proxy
-
-# Web服务器优化
-sudo ./optimize.sh --web
-
-# 数据库服务器优化
-sudo ./optimize.sh --database
-
-# 查看优化效果对比
-sudo ./optimize.sh --compare
-
-# 预览模式（不实际应用）
-sudo ./optimize.sh --proxy --preview
-```
-
-## 文件位置
-
-```
-/etc/sysctl.d/99-kernel-optimization.conf     # 优化配置文件
-/var/backups/kernel_optimization/             # 备份目录
-/var/log/kernel_optimization.log              # 操作日志
-```
----
-
-## 🌐 Web服务类
-
-### 🔧 Nginx 自动更新
-
-**💡 作用：** 自动化安装和升级Nginx，支持源码编译优化
-
-```bash
-# 🚀 一键运行
-bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/Auto_Upgrade_Nginx.sh)
-```
-
-#### ⚡ 核心特性
-
-- **🔥 版本选择**：主线版 or 稳定版
-- **⚙️ 依赖管理**：自动安装编译依赖
-- **🗂️ 备份恢复**：自动备份现有配置
-- **⚡ 性能优化**：启用 Brotli + GeoIP2
-- **🔧 systemd集成**：自动配置服务
-- **🛠️ 错误处理**：详细日志和诊断
-
-#### 📦 内置模块
-
-| 模块 | 功能 | 用途 |
-|------|------|------|
-| QUIC | HTTP/3支持 | 🚀 下一代协议 |
-| Brotli | 压缩算法 | 📦 更高压缩比 |
-| OCSP | 证书验证 | 🔒 安全增强 |
-| GEOIP2 | 地理位置 | 🌍 IP地理定位 |
-| KTLS | 内核TLS | ⚡ 性能优化 |
+| 🔧 文件 | 🎯 用途 | ⚠️ 备注 |
+| --- | --- | --- |
+| `Auto_Upgrade_Nginx.sh` | 🌐 源码编译安装 / 升级 Nginx | 🔐 需要 root |
+| `collect_repeat_dns.sh` | 🧠 分析 mosdns 重复查询域名 | 📄 支持 `dns_monitor.conf` |
+| `disk_usage_analyzer.sh` | 💽 磁盘空间占用分析 | 👀 只读检查，不删文件 |
+| `enhanced-doh-test.sh` | 🧪 测试 DoH 节点延迟和能力 | 📦 需要 `curl` |
+| `install_cert.sh` | 🔐 申请、续期、部署 SSL 证书 | 🌍 支持 DNS API |
+| `kernel_optimization.sh` | ⚙️ Linux 内核 / 网络参数优化 | 🔐 需要 root |
+| `nginx_access_analyzer.sh` | 📊 Nginx 访问日志分析 | 📣 可推送企业微信 |
+| `search_ip.sh` | 🔍 分析 Nginx 高频 DNS 访问 IP | 📣 可推送企业微信 |
+| `server_status_report.sh` | 📊 推送服务器状态报告 | 📣 可推送企业微信 |
+| `server_security_audit.sh` | 🛡️ 服务器安全巡检 | 👀 只读检查，不改配置 |
+| `shell_tools_lint.sh` | 🧪 仓库脚本自检 | ✅ 检查语法、头部、权限 |
+| `ssl_cert_monitor.sh` | 🔐 SSL 证书有效期巡检 | 📣 可推送企业微信 |
+| `system_config_backup.sh` | 💾 系统关键配置备份 | 🧰 适合升级前快照 |
+| `update_Country.sh` | 🌏 更新 GeoIP Country.mmdb | 💾 支持缓存和备份 |
+| `update_frp.sh` | 🚇 安装、更新、卸载 FRP | 🐧 支持 OpenWrt / Linux |
+| `Mactype助手增强版 (Edge优化)-1.0.0.user.js` | ✨ Edge 字体渲染增强 | 🧩 Userscript |
+| `junyaoairwebsite-intranet-optimization1.0.user.js` | 🛫 吉祥航空内网页面字体优化 | 🧩 Userscript |
+| `VPS_nginx_CDN_伪装网址.conf` | 🧱 Nginx 反代配置模板 | 📝 使用前改域名和端口 |
 
 ---
 
-### 🌍 GeoIP2 数据库更新
-
-**💡 作用：** 更新Country.mmdb数据库供Nginx GEOIP2使用
+## ⚡ 快速开始
 
 ```bash
-# 🚀 一键运行
-bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/update_Country.sh)
+git clone https://github.com/BuBuXSY/Shell_Tools.git
+cd Shell_Tools
+chmod +x *.sh
 ```
 
-#### 📍 详细信息
-
-- **📂 默认路径**：`/usr/share/geoip`
-- **📱 通知支持**：企业微信推送
-- **🔄 更新频率**：建议每月更新
-- **💾 自动备份**：保留旧版本数据库
-
----
-
-### 🔐 SSL证书自动申请
-
-**💡 作用：** 超简单的SSL证书申请工具，支持多CA和自动验证
+### 🛠️ 常用命令
 
 ```bash
-# 🚀 一键运行
-bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/install_cert.sh)
-```
+# ⚙️ VPS / 代理服务器内核优化
+sudo ./kernel_optimization.sh --proxy
 
-#### 🎯 核心功能
+# 🌐 编译安装或升级 Nginx
+sudo ./Auto_Upgrade_Nginx.sh
 
-| 功能 | 图标 | 说明 |
-|------|------|------|
-| 申请新证书 | 🆕 | 新域名SSL证书申请 |
-| 续期证书 | 🔄 | 快过期证书续命 |
-| 强制更新 | 💪 | 重新生成证书 |
-| 查看状态 | 👀 | 检查证书健康度 |
+# 🚇 安装 / 更新 FRP
+sudo ./update_frp.sh
 
-#### 🤖 验证方式
+# 🧪 测试 DoH 节点
+./enhanced-doh-test.sh
 
-**手动验证** 🙋‍♂️
-```bash
-# 添加DNS TXT记录
-📝 记录名称：_acme-challenge.example.com
-📋 记录类型：TXT
-🔑 记录值：[系统生成]
-```
+# 🛡️ 只读安全巡检
+./server_security_audit.sh
 
-**API自动验证** 🤖
-| DNS服务商 | API名称 | 推荐度 |
-|-----------|---------|--------|
-| 阿里云 ☁️ | dns_ali | ⭐⭐⭐⭐⭐ |
-| 腾讯云 🐧 | dns_tencent | ⭐⭐⭐⭐⭐ |
-| Cloudflare 🌤️ | dns_cf | ⭐⭐⭐⭐⭐ |
-| DNSPod 🌐 | dns_dp | ⭐⭐⭐⭐ |
+# 🔐 SSL 证书有效期巡检
+./ssl_cert_monitor.sh
 
-#### 📂 证书文件位置
+# 📊 Nginx 访问日志分析
+./nginx_access_analyzer.sh
 
-```
-📁 /etc/nginx/cert_file/
-├── 📄 domain.cert.pem      # 证书文件
-├── 🔐 domain.key.pem       # 私钥文件
-└── 📜 domain.fullchain.pem # 完整证书链
+# 💾 系统关键配置备份
+sudo ./system_config_backup.sh
+
+# 💽 磁盘空间占用分析
+./disk_usage_analyzer.sh
+
+# 🧪 仓库脚本自检
+./shell_tools_lint.sh
 ```
 
 ---
 
-## 🔍 监控分析类
+## 📣 企业微信推送配置
 
-### 🌍 IP访问分析（防刷DNS）
-
-**💡 作用：** 查询访问服务器的IP并显示地理位置
+推送类脚本建议用环境变量传入 webhook，避免把密钥写死在脚本里。
 
 ```bash
-# 🚀 一键运行
-bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/search_ip.sh)
+export WEBHOOK_URL="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx"
+export WECHAT_WEBHOOK_URL="$WEBHOOK_URL"
 ```
 
-#### 📋 使用要求
+适用脚本：
 
-- ✅ **安装nali**：IP地理位置查询工具
-- ✅ **开启日志**：Nginx access.log 记录
-- 📊 **分析功能**：识别异常访问模式
-
-#### 🎯 适用场景
-
-- 🛡️ **防刷检测**：识别恶意IP
-- 📈 **访问统计**：地理分布分析
-- 🚫 **黑名单**：生成IP封禁列表
+- 📊 `server_status_report.sh`
+- 📊 `nginx_access_analyzer.sh`
+- 🔍 `search_ip.sh`
+- 🔐 `ssl_cert_monitor.sh`
+- 🌏 `update_Country.sh`
+- 🧠 `collect_repeat_dns.sh`
 
 ---
 
-### 📊 服务器状态推送
-
-**💡 作用：** 定时推送服务器运行状态到企业微信
+## 📥 单文件下载示例
 
 ```bash
-# 📥 下载脚本
-curl -L -o server_status_report.sh \
-  https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/server_status_report.sh
+# 🚇 FRP 管理脚本
+curl -fsSL https://raw.githubusercontent.com/BuBuXSY/Shell_Tools/main/update_frp.sh -o update_frp.sh
+chmod +x update_frp.sh
 
-# ✅ 设置权限
-chmod +x server_status_report.sh
-
-# ⚙️ 配置webhook（记得修改脚本中的key）
-```
-
-#### 📱 监控内容
-
-| 监控项 | 图标 | 说明 |
-|--------|------|------|
-| CPU使用率 | 🧠 | 实时CPU负载 |
-| 内存占用 | 🧮 | RAM使用情况 |
-| 磁盘空间 | 💾 | 存储空间状态 |
-| 网络流量 | 🌐 | 带宽使用情况 |
-| 系统负载 | ⚡ | Load Average |
-
-#### ⏰ 定时设置
-
-```bash
-# 每小时推送一次状态
-0 * * * * /path/to/server_status_report.sh
-
-# 每天9点推送详细报告
-0 9 * * * /path/to/server_status_report.sh --detailed
+# 🌏 GeoIP 数据库更新脚本
+curl -fsSL https://raw.githubusercontent.com/BuBuXSY/Shell_Tools/main/update_Country.sh -o update_Country.sh
+chmod +x update_Country.sh
 ```
 
 ---
 
-### 🎯 MOSDNS 重复域名收集
+## 🧭 使用建议
 
-**💡 作用：** 优化DNS查询压力，生成TTL规则配置
-
-```bash
-# 🚀 一键运行
-bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/collect_repeat_dns.sh)
-```
-
-#### ⚙️ 配置要点
-
-| 配置项 | 要求 | 说明 |
-|--------|------|------|
-| 日志级别 | 📝 info级别 | 开启mosdns详细日志 |
-| 配置文件 | ⚙️ 自动生成 | `dns_monitor.conf` |
-| 通知方式 | 📱 企业微信 | 支持状态推送 |
-| 定时任务 | 🕐 每小时 | `0 * * * * /path/to/script` |
-
-#### 🎯 优化效果
-
-- 📉 **减少查询**：缓存热点域名
-- ⚡ **提升性能**：优化响应时间
-- 📊 **数据分析**：生成访问统计
+- 🧪 会修改系统配置、证书、Nginx 或内核参数的脚本，建议先在测试机验证。
+- 🔐 `install_cert.sh`、`Auto_Upgrade_Nginx.sh`、`kernel_optimization.sh` 通常需要 root 权限。
+- 🔍 `search_ip.sh` 如需显示 IP 归属地，建议安装 `nali`。
+- 🧩 `.user.js` 文件需要通过 Tampermonkey、Violentmonkey 等 userscript 管理器安装。
+- 📜 本项目使用 MIT License，详见 `LICENSE`。
 
 ---
 
-## 🚀 网络工具类
+## 🧰 维护状态
 
-### 🌉 Frp 自动安装更新
-
-**💡 作用：** 自动安装和更新Frp内网穿透工具
-
-```bash
-# 🚀 一键运行
-bash <(curl -Ls https://raw.githubusercontent.com/BuBuxsy/Shell_Tools/main/update_frp.sh)
-```
-
-#### 🏗️ 架构支持
-
-| 架构 | 图标 | 支持状态 |
-|------|------|----------|
-| amd64 | 💻 | ✅ 完全支持 |
-| arm64 | 📱 | ✅ 完全支持 |
-| armv7 | 🔧 | ⚠️ 部分支持 |
-| mips  | 📡 | ⚠️ 官方构建 |
-
-#### 🔧 功能特性
-
-- **📦 自动下载**：获取最新版本
-- **🔄 平滑升级**：不中断现有连接
-- **⚙️ 配置保留**：保持原有配置
-- **🛡️ SHA256 校验**：确保安全
-- **🧠 智能判断 系统 & 架构**：OpenWrt 优先 uclient-fetch
-- **🧭 自动注册服务**：systemd / procd
-
-####  ⚠️ 提示
-
-- **二进制默认：/usr/bin/frps / frpc**
-- **配置默认：/etc/frp/*.toml**
- 
----
-
-### 🌐 DoH 服务器测试工具
-
-**💡 作用：** 全面测试DNS-over-HTTPS服务器性能
-
-```bash
-# 📥 下载脚本
-curl -L -o enhanced-doh-test.sh \
-  https://raw.githubusercontent.com/BuBuXSY/Shell_Tools/refs/heads/main/enhanced-doh-test.sh
-
-# ✅ 设置权限
-chmod +x enhanced-doh-test.sh
-```
-
-#### 🎯 测试功能
-
-| 功能 | 图标 | 说明 |
-|------|------|------|
-| 协议支持 | 🌍 | HTTP/3、EDNS、DNSSEC |
-| IPv6测试 | 🔗 | 双栈网络支持 |
-| 性能测试 | ⚡ | 延迟和可用性 |
-| 智能推荐 | 🧠 | 最佳服务器推荐 |
-
-#### 📊 输出格式
-
-```bash
-# 🎯 测试指定域名
-./enhanced-doh-test.sh -d example.com
-
-# 📋 JSON格式输出
-./enhanced-doh-test.sh -f json
-
-# 🔍 网络诊断模式
-./enhanced-doh-test.sh --diagnosis
-
-# 📈 CSV报告输出
-./enhanced-doh-test.sh -f csv
-```
-
-#### 🌍 覆盖服务商
-
-**国内服务商**
-- 🔵 阿里云DNS
-- 🐧 腾讯云DNS  
-- 🟢 360DNS
-- 🔶 百度DNS
-
-**国外服务商**
-- 🌤️ Cloudflare
-- 🔍 Google DNS
-- 🛡️ Quad9
-- 🎯 OpenDNS
-
----
-
-## ⚠️ 使用须知
-
-### 🛡️ 安全提醒
-
-| 建议 | 图标 | 重要性 |
-|------|------|--------|
-| 测试优先 | ✅ | ⭐⭐⭐⭐⭐ |
-| 自动备份 | 📦 | ⭐⭐⭐⭐ |
-| 监控系统 | 📊 | ⭐⭐⭐⭐ |
-| 快速回滚 | 🔄 | ⭐⭐⭐⭐⭐ |
-
-
-### 📞 获取帮助
-
-```bash
-# 💡 查看脚本帮助
-./script_name.sh --help
-
-# 📋 查看详细选项
-./script_name.sh --usage
-
-# 🔍 调试模式运行
-./script_name.sh --debug
-```
-
----
-
-## 🎯 快速导航
-
-### 🔰 新手推荐路径
-
-1. **🛠️ 系统优化** → Linux内核参数优化（快速模式）
-2. **🔐 SSL证书** → 证书申请（手动DNS验证）
-3. **📊 状态监控** → 服务器状态推送
-4. **🌐 性能测试** → DoH服务器测试
-
-### 🚀 进阶使用路径
-
-1. **🔧 Nginx升级** → 自动更新（包含所有模块）
-2. **🤖 自动化SSL** → API自动验证
-3. **🎯 DNS优化** → MOSDNS重复域名收集
-4. **🌉 内网穿透** → Frp自动部署
-
-### 📈 生产环境建议
-
-1. **📦 备份策略**：所有配置自动备份
-2. **📊 监控体系**：状态推送 + IP分析  
-3. **🔄 自动化**：SSL自动续期 + 系统自动优化
-4. **🛡️ 安全加固**：GeoIP2地理限制 + 防刷检测
-
----
-
-## 🤝 贡献与支持
-
-### 💖 参与贡献
-
-- **🐛 Bug反馈**：[提交Issue](https://github.com/BuBuxsy/Shell_Tools/issues)
-- **💡 功能建议**：[功能请求](https://github.com/BuBuxsy/Shell_Tools/issues/new)
-- **🔧 代码贡献**：[Pull Request](https://github.com/BuBuxsy/Shell_Tools/pulls)
-
-
-### ⭐ 支持项目
-
-觉得有用？给个Star支持一下！⭐
-
----
-
-**🎉 让Linux运维更简单，让自动化成为习惯！**
+- ✅ 已补齐 `LICENSE`
+- ✅ 已统一 GitHub 地址大小写为 `BuBuXSY/Shell_Tools`
+- ✅ 已将 webhook 配置改为优先读取环境变量
+- ✅ 已保留脚本原本的中文 + emoji 输出风格
+- ✅ 已新增只读安全巡检脚本 `server_security_audit.sh`
+- ✅ 已优化 `collect_repeat_dns.sh` 临时文件生成，降低并发运行互相覆盖风险
+- ✅ 已新增 `.gitignore`，避免误提交本地配置、日志、缓存和备份文件
+- ✅ 已修复 `server_security_audit.sh` 在 nftables 不可读时提前退出的问题
+- ✅ 已新增 SSL 证书有效期巡检脚本 `ssl_cert_monitor.sh`
+- ✅ 已新增 Nginx 访问日志分析脚本 `nginx_access_analyzer.sh`
+- ✅ 已新增系统关键配置备份脚本 `system_config_backup.sh`
+- ✅ 已修复新增脚本 cleanup trap 可能影响退出码的问题
+- ✅ 已新增只读磁盘空间分析脚本 `disk_usage_analyzer.sh`
+- ✅ 已统一所有 `.sh` 脚本开头格式：emoji 脚本名、功能说明、`By: BuBuXSY`、`Version`
+- ✅ 已补齐 `search_ip.sh`、`server_status_report.sh` 的彩色终端输出
+- ✅ 已统一 `.user.js` 头部 metadata：emoji 名称、日期、署名和描述风格
+- ✅ 已新增仓库自检脚本 `shell_tools_lint.sh`
+- ✅ 已新增 GitHub Actions：推送和 PR 时自动运行仓库自检

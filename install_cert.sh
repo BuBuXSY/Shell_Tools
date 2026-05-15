@@ -22,10 +22,11 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 # ====================================================
-# SSL证书管理工具，支持多CA，DNS API/手动验证，ECC证书，自动部署并重载nginx
+# 🔐 SSL 证书管理工具
 # 支持多CA，DNS API/手动验证，ECC证书，自动部署并重载nginx
 # By: BuBuXSY
 # Version: 2025-09-25
+# ====================================================
 
 set -euo pipefail  # 严格模式
 

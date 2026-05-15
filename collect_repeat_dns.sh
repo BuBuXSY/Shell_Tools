@@ -22,11 +22,12 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 # ====================================================
-# ==== MOSDNS监控辅助脚本====
+# 🧠 MOSDNS 重复域名监控辅助脚本
 # 功能: 监控mosdns查询日志，检测重复域名并生成，最后会添加在规则里面辅助减少mosdns对重复域名的查询，重复次数很多的域名服务器直接TTL最大。
 # 依赖: mosdns 日志文件
 # By: BuBuXSY
 # Version: 2025-07-19
+# ====================================================
 
 
 
@@ -74,9 +75,9 @@ LOG_FILE="$DEFAULT_LOG_FILE"
 HISTORY_FILE="$DEFAULT_HISTORY_FILE"
 MAX_LOG_SIZE="$DEFAULT_MAX_LOG_SIZE"
 
-# 企业微信配置
-WECHAT_WEBHOOK_URL="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=你的KEY"
-ENABLE_WECHAT_NOTIFY=true
+# 企业微信配置（默认关闭，避免首次生成配置就带着占位密钥）
+WECHAT_WEBHOOK_URL=""
+ENABLE_WECHAT_NOTIFY=false
 
 # 邮件配置（可选）
 ENABLE_EMAIL_NOTIFY=false
@@ -181,7 +182,8 @@ check_prerequisites() {
     fi
     
     # 创建输出目录
-    local output_dir=$(dirname "$OUTPUT_FILE")
+    local output_dir
+    output_dir=$(dirname "$OUTPUT_FILE")
     if [[ ! -d "$output_dir" ]]; then
         mkdir -p "$output_dir" || {
             log_error "无法创建输出目录: $output_dir"
@@ -200,8 +202,10 @@ check_prerequisites() {
 extract_domains() {
     log_info "开始从日志文件中提取域名..."
     
-    local temp_file="/tmp/dns_monitor_domains_$.tmp"
-    local stats_file="/tmp/dns_monitor_stats_$.tmp"
+    local temp_file
+    local stats_file
+    temp_file=$(mktemp /tmp/dns_monitor_domains_XXXXXX.tmp)
+    stats_file=$(mktemp /tmp/dns_monitor_stats_XXXXXX.tmp)
     
     # 检查源文件是否存在且不为空
     if [[ ! -s "$DOMAIN_FILE" ]]; then
@@ -305,7 +309,8 @@ generate_report() {
     
     log_info "正在生成重复域名报告..."
     
-    local filtered_file="/tmp/dns_monitor_filtered_$.tmp"
+    local filtered_file
+    filtered_file=$(mktemp /tmp/dns_monitor_filtered_XXXXXX.tmp)
     filter_domains "$domains_file" "$filtered_file"
     
     # 生成规则文件
@@ -407,7 +412,8 @@ save_history() {
     local history_entry
     if history_entry=$(jq --argjson dup_count "$duplicate_count" '. + {duplicate_domains: $dup_count}' "$stats_file" 2>/dev/null); then
         if [[ -f "$HISTORY_FILE" ]]; then
-            local temp_history="/tmp/dns_monitor_history_$.tmp"
+            local temp_history
+            temp_history=$(mktemp /tmp/dns_monitor_history_XXXXXX.tmp)
             if jq --argjson entry "$history_entry" '. + [$entry]' "$HISTORY_FILE" > "$temp_history" 2>/dev/null; then
                 mv "$temp_history" "$HISTORY_FILE"
                 log_info "历史记录已更新"

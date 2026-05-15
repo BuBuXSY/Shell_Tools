@@ -22,9 +22,11 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 # ====================================================
-#  全面型 DoH 测试脚本
+# 🧪 全面型 DoH 测试脚本
+# 功能：测试 DoH 服务可用性、延迟、HTTP 能力和基础网络依赖
 # By: BuBuXSY
 # Version: 2025-07-18
+# ====================================================
 
 
 # 配置变量

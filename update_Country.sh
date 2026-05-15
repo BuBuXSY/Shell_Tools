@@ -22,13 +22,14 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 # ====================================================
-# 更新 GeoIP 国家数据库脚本
+# 🌏 GeoIP 国家数据库更新脚本
+# 功能：更新 Country.mmdb，支持 ETag / Last-Modified 缓存、备份和 Nginx 重载
 # By: BuBuXSY
 # Version: 2025-07-19
 # ====================================================
 
 # ===== 脚本设置 =====
-set +e
+set -euo pipefail
 
 # ===== 色彩输出 =====
 GREEN="\e[32m"
@@ -48,27 +49,36 @@ last_modified_file="/var/lib/geoip_country_wo_asn.last"
 version_file="/var/lib/geoip_country_wo_asn.version"
 log_file="/var/log/geoip_update.log"
 
-# ✅ 企业微信 Webhook 完整地址
-wechat_webhook_url="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=加入你自己的KEY"
-
-# ==== 检查 webhook 配置 ====
-if [[ ! "$wechat_webhook_url" =~ ^https:// ]]; then
-    echo -e "${RED}❌ Webhook URL 配置错误！${RESET}"
-    exit 1
-fi
+# 企业微信 Webhook 完整地址。推荐通过环境变量传入，避免把密钥写进脚本。
+wechat_webhook_url="${WECHAT_WEBHOOK_URL:-${WEBHOOK_URL:-}}"
 
 # ===== 企业微信推送函数 =====
 send_wechat_message() {
     local message="$1"
+    if [[ -z "$wechat_webhook_url" || "$wechat_webhook_url" == *"加入你自己的KEY"* || "$wechat_webhook_url" == *"你的"* ]]; then
+        echo -e "${YELLOW}⚠️  未配置企业微信 webhook，跳过推送。${RESET}"
+        return 0
+    fi
+
+    if [[ ! "$wechat_webhook_url" =~ ^https:// ]]; then
+        echo -e "${YELLOW}⚠️  Webhook URL 非 https，跳过推送。${RESET}"
+        return 0
+    fi
+
     local safe_message
     safe_message=$(echo "$message" | sed ':a;N;$!ba;s/\n/\\n/g' | sed 's/"/\\"/g')
     local json="{\"msgtype\":\"text\",\"text\":{\"content\":\"$safe_message\"}}"
     echo -e "\n📤 正在推送内容到企业微信..."
-    curl -s -X POST "$wechat_webhook_url" -H 'Content-Type: application/json' -d "$json" >/dev/null
+    if curl -fsS -X POST "$wechat_webhook_url" -H 'Content-Type: application/json' -d "$json" >/dev/null; then
+        echo -e "${GREEN}✅ 企业微信推送成功。${RESET}"
+    else
+        echo -e "${YELLOW}⚠️  企业微信推送失败，继续执行主流程。${RESET}"
+    fi
 }
 
 # ===== 准备目录结构 =====
 mkdir -p "$tmp_dir" "$(dirname "$etag_file")" "$(dirname "$log_file")"
+trap 'rm -rf "$tmp_dir"' EXIT
 
 echo -e "${CYAN}🌏 正在检查 GeoIP 数据库更新...${RESET}"
 echo "[`date '+%F %T'`] 开始检查更新..." >> "$log_file"
@@ -79,17 +89,21 @@ header_args=()
 [[ -f "$last_modified_file" ]] && lm=$(<"$last_modified_file") && header_args+=("-H" "If-Modified-Since: $lm")
 
 # ===== 请求响应头进行判断 =====
-response=$(curl -fsSIL "${header_args[@]}" "$db_url")
-if echo "$response" | grep -q "HTTP/1.1 304 Not Modified"; then
+if ! response=$(curl -fsSIL "${header_args[@]}" "$db_url"); then
+    echo -e "${RED}❌ 无法检查远程数据库更新，请检查网络。${RESET}"
+    send_wechat_message "【🌏 GeoIP 数据库更新通知】\n❌ 无法检查远程数据库更新。\n📅 时间：$(date '+%F %T')"
+    exit 1
+fi
+
+if echo "$response" | grep -Eq "HTTP/[0-9.]+ 304"; then
     echo -e "${GREEN}✅ 数据库无更新，无需下载。${RESET}"
     send_wechat_message "【🌏 GeoIP 数据库更新通知】\n✅ 数据库已是最新，无需更新。\n📅 时间：$(date '+%F %T')"
-    rm -rf "$tmp_dir"
     exit 0
 fi
 
 # ===== 下载新数据库 =====
 echo -e "${YELLOW}⬇️  发现更新，开始下载...${RESET}"
-curl -fsSL --connect-timeout 8 --max-time 20 "$db_url" -o "$tmp_path"
+curl -fsSL --retry 3 --connect-timeout 8 --max-time 20 "$db_url" -o "$tmp_path"
 if [[ ! -s "$tmp_path" ]]; then
     echo -e "${RED}❌ 下载失败或文件为空。${RESET}"
     send_wechat_message "【🌏 GeoIP 数据库更新通知】\n❌ 下载失败或文件为空，更新终止。\n📅 时间：$(date '+%F %T')"
@@ -98,8 +112,8 @@ fi
 echo -e "${GREEN}✅ 下载成功：$tmp_path${RESET}"
 
 # ===== 提取版本信息 =====
-etag=$(curl -fsSI "$db_url" | grep -i '^ETag:' | cut -d' ' -f2- | tr -d '\r')
-last_modified=$(curl -fsSI "$db_url" | grep -i '^Last-Modified:' | cut -d' ' -f2- | tr -d '\r')
+etag=$(curl -fsSI "$db_url" | grep -i '^ETag:' | cut -d' ' -f2- | tr -d '\r' || true)
+last_modified=$(curl -fsSI "$db_url" | grep -i '^Last-Modified:' | cut -d' ' -f2- | tr -d '\r' || true)
 sha256=$(sha256sum "$tmp_path" | awk '{print $1}')
 echo "$etag" > "$etag_file"
 echo "$last_modified" > "$last_modified_file"
@@ -118,13 +132,9 @@ echo -e "${GREEN}📁 数据库更新完成：$target_path${RESET}"
 } > "$version_file"
 echo -e "${CYAN}📄 版本信息保存至：$version_file${RESET}"
 
-# ===== 清理临时文件 =====
-rm -rf "$tmp_dir"
-
 # ===== 测试并重载 Nginx =====
 echo -e "${BLUE}🧪 检查 Nginx 配置...${RESET}"
-nginx -t
-if [[ $? -eq 0 ]]; then
+if nginx -t; then
     nginx -s reload
     echo -e "${GREEN}🚀 Nginx 重载成功！${RESET}"
     send_wechat_message "【🌏 GeoIP 数据库更新成功】\n✅ 数据库已更新并成功应用。\n📅 时间：$(date '+%F %T')\n🔐 SHA256: $sha256\n📦 ETag: $etag"

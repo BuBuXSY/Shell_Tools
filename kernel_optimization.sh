@@ -25,7 +25,8 @@
 # 🌉 Linux 内核架构级优化工具 v2.0
 # 📦 场景：VPS | 低配VPS | 旁路由 | 主路由 | 裸机 | 单片机SBC
 # 🛡 备份回滚 | 幂等执行 | ulimit 持久化
-# By: BuBuXSY | Version: 2.0
+# By: BuBuXSY
+# Version: 2.0
 # 最低要求：bash 4.0+
 #
 # 用法：

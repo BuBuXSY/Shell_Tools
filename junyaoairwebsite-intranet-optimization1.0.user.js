@@ -1,9 +1,10 @@
 // ==UserScript==
-// @name         吉祥航空内网字体优化
+// @name         🛫 吉祥航空内网字体优化
 // @namespace    http://tampermonkey.net/
 // @version      1.0
-// @description  优化吉祥航空内部系统的字体显示
-// @author       You
+// @date         2025-07-19
+// @description  ✨ 优化吉祥航空内部系统的字体显示
+// @author       BuBuXSY
 // @match        https://cabinternal.juneyaoair.com/*
 // @match        http://cabinternal.juneyaoair.com/*
 // @match        *://*.juneyaoair.com/*

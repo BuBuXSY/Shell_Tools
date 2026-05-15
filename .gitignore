@@ -1,0 +1,19 @@
+# 🧩 本地配置
+dns_monitor.conf
+*.local
+*.env
+
+# 🧾 日志和缓存
+*.log
+*.cache
+*.tmp
+*.bak
+*.bak_*
+
+# 🗂️ 临时目录
+.tmp/
+tmp/
+cache/
+
+# 🐚 Shell 检查工具缓存
+.shellcheckrc.local

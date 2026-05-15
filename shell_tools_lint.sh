@@ -1,0 +1,131 @@
+#!/usr/bin/env bash
+# ====================================================
+# MIT License
+#
+# Copyright (c) 2025 BuBuXSY
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+# ====================================================
+# 🧪 Shell_Tools 仓库自检脚本
+# 功能：检查 shell 语法、脚本头部规范、emoji / 色彩输出和可执行权限
+# By: BuBuXSY
+# Version: 2026-05-16
+# ====================================================
+
+set -euo pipefail
+
+GREEN="\e[32m"
+YELLOW="\e[33m"
+RED="\e[31m"
+BLUE="\e[34m"
+CYAN="\e[36m"
+BOLD="\e[1m"
+RESET="\e[0m"
+
+FAILED=0
+CHECKED=0
+
+log_info() { echo -e "${BLUE}ℹ️  $1${RESET}"; }
+log_ok() { echo -e "${GREEN}✅ $1${RESET}"; }
+log_warn() { echo -e "${YELLOW}⚠️  $1${RESET}"; }
+log_error() { echo -e "${RED}❌ $1${RESET}"; }
+
+banner() {
+    echo -e "${CYAN}"
+    echo "╔══════════════════════════════════════════════╗"
+    echo "║        🧪 Shell_Tools 仓库自检               ║"
+    echo "╚══════════════════════════════════════════════╝"
+    echo -e "${RESET}"
+}
+
+fail() {
+    FAILED=$((FAILED + 1))
+    log_error "$1"
+}
+
+check_shell_syntax() {
+    local file="$1"
+    if bash -n "$file"; then
+        log_ok "语法通过：$file"
+    else
+        fail "语法失败：$file"
+    fi
+}
+
+check_header() {
+    local file="$1"
+
+    grep -Eq '^# .*脚本|^# .*工具' "$file" || fail "缺少 emoji 脚本名称：$file"
+    grep -q '^# 功能' "$file" || grep -q '^# 支持' "$file" || grep -q '^# 📦 场景' "$file" || fail "缺少功能说明：$file"
+    grep -q '^# By: BuBuXSY' "$file" || fail "缺少署名：$file"
+    grep -q '^# Version:' "$file" || fail "缺少版本日期：$file"
+}
+
+check_style() {
+    local file="$1"
+
+    grep -Eq '✅|⚠️|❌|ℹ️|🔧|📊|🚀|🛡️|🔐|💾|💽|🌏|🌉|🧪' "$file" || fail "缺少 emoji 输出或说明：$file"
+    grep -Eq 'GREEN|C_GREEN|RED|C_RED|YELLOW|C_YELLOW|CYAN|C_CYAN|NC=' "$file" || fail "缺少色彩输出变量：$file"
+}
+
+check_executable() {
+    local file="$1"
+    [[ -x "$file" ]] || fail "缺少可执行权限：$file"
+}
+
+check_userscript_metadata() {
+    local file="$1"
+    grep -q '^// @name.*[✨🛫]' "$file" || fail "userscript 缺少 emoji 名称：$file"
+    grep -q '^// @author.*BuBuXSY' "$file" || fail "userscript 缺少署名：$file"
+    grep -q '^// @date' "$file" || fail "userscript 缺少日期：$file"
+
+    if command -v node >/dev/null 2>&1; then
+        node --check "$file" >/dev/null || fail "userscript JS 语法失败：$file"
+    fi
+}
+
+main() {
+    banner
+
+    local file
+    while IFS= read -r file; do
+        CHECKED=$((CHECKED + 1))
+        log_info "🔍 检查 shell 脚本：$file"
+        check_shell_syntax "$file"
+        check_header "$file"
+        check_style "$file"
+        check_executable "$file"
+    done < <(find . -maxdepth 1 -type f -name '*.sh' | sort)
+
+    while IFS= read -r file; do
+        CHECKED=$((CHECKED + 1))
+        log_info "🧩 检查 userscript：$file"
+        check_userscript_metadata "$file"
+    done < <(find . -maxdepth 1 -type f -name '*.user.js' | sort)
+
+    echo
+    if [[ "$FAILED" -eq 0 ]]; then
+        log_ok "🎉 自检完成：共检查 $CHECKED 个文件，未发现问题"
+    else
+        log_error "📌 自检完成：共检查 $CHECKED 个文件，发现 $FAILED 个问题"
+        exit 1
+    fi
+}
+
+main "$@"
