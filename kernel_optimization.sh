@@ -26,7 +26,7 @@
 # 📦 场景：VPS | 低配VPS | 旁路由 | 主路由 | 裸机 | 单片机SBC
 # 🛡 备份回滚 | 幂等执行 | ulimit 持久化
 # By: BuBuXSY
-# Version: 2.0
+# Version: 2026-07-11
 # 最低要求：bash 4.0+
 #
 # 用法：
@@ -62,10 +62,45 @@ readonly RESET=$'\033[0m'
 # =========================
 readonly LOG_FILE="/var/log/linux-optimizer-v2.log"
 readonly SYSCTL_CONF="/etc/sysctl.d/99-v2-performance.conf"
-BACKUP_DIR="/etc/sysctl-optimizer-backup-$(date +%Y%m%d_%H%M%S)"
+BACKUP_DIR="/etc/sysctl-optimizer-backup-$(date +%Y%m%d_%H%M%S)-$$"
 readonly BACKUP_DIR
+LOG_READY=0
+SYSCTL_TMP=""
+SYSCTL_CONFIG_TMP=""
+LIMITS_TMP=""
+DEGRADED=0
+RUNTIME_RESTORE_SCRIPT=""
+declare -A RUNTIME_SNAPSHOTS=()
 
-_log_raw() { echo -e "$(date '+%Y-%m-%d %H:%M:%S') $*" | tee -a "$LOG_FILE"; }
+prepare_sysctl_config() {
+    mkdir -p "$(dirname "$SYSCTL_CONF")" \
+        || { err "无法创建 sysctl 配置目录"; exit 1; }
+    SYSCTL_CONFIG_TMP=$(mktemp "${SYSCTL_CONF}.XXXXXX") \
+        || { err "无法创建 sysctl 配置临时文件"; exit 1; }
+}
+
+commit_sysctl_config() {
+    chmod 0644 "$SYSCTL_CONFIG_TMP" \
+        && mv -f "$SYSCTL_CONFIG_TMP" "$SYSCTL_CONF" \
+        || { err "无法原子写入 sysctl 配置"; exit 1; }
+    SYSCTL_CONFIG_TMP=""
+}
+
+stage_existing_sysctl_config() {
+    prepare_sysctl_config
+    cat "$SYSCTL_CONF" > "$SYSCTL_CONFIG_TMP" \
+        || { err "无法读取现有 sysctl 配置"; exit 1; }
+}
+
+_log_raw() {
+    local line
+    line="$(date '+%Y-%m-%d %H:%M:%S') $*"
+    if [[ "$LOG_READY" -eq 1 ]]; then
+        echo -e "$line" | tee -a "$LOG_FILE"
+    else
+        echo -e "$line"
+    fi
+}
 log()      { _log_raw "${CYAN}[ℹ️ ]${RESET} $1"; }
 ok()       { _log_raw "${GREEN}[✅]${RESET} $1"; }
 warn()     { _log_raw "${YELLOW}[⚠️ ]${RESET} $1"; }
@@ -77,13 +112,59 @@ log_step() {
     _log_raw "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
 }
 
+append_runtime_restore() {
+    local command_line="$1"
+    [[ -n "$RUNTIME_RESTORE_SCRIPT" ]] \
+        || { err "运行时恢复脚本尚未初始化"; exit 1; }
+    printf '%s\n' "$command_line" >> "$RUNTIME_RESTORE_SCRIPT" \
+        || { err "无法写入运行时恢复脚本: $RUNTIME_RESTORE_SCRIPT"; exit 1; }
+}
+
+snapshot_runtime_value() {
+    local path="$1"
+    local value="${2-}"
+    local key="file:$path"
+    [[ -z "${RUNTIME_SNAPSHOTS[$key]+x}" ]] || return 0
+    if [[ $# -lt 2 ]] && ! value=$(cat "$path" 2>/dev/null); then
+        warn "无法读取运行时原值，跳过修改: $path"
+        DEGRADED=1
+        return 1
+    fi
+    append_runtime_restore "restore_value $(printf '%q' "$path") $(printf '%q' "$value")"
+    RUNTIME_SNAPSHOTS["$key"]=1
+}
+
+snapshot_nic_queues() {
+    local iface="$1"
+    local key="ethtool:$iface"
+    local queue_output
+    local combined
+    [[ -z "${RUNTIME_SNAPSHOTS[$key]+x}" ]] || return 0
+    if ! queue_output=$(ethtool -l "$iface" 2>/dev/null); then
+        warn "无法读取 $iface 当前队列数，跳过队列调整"
+        DEGRADED=1
+        return 1
+    fi
+    combined=$(awk '
+        /^Current hardware settings:/ {current=1; next}
+        current && $1 == "Combined:" {print $2; exit}
+    ' <<< "$queue_output")
+    if [[ ! "$combined" =~ ^[1-9][0-9]*$ ]]; then
+        warn "无法解析 $iface 当前 combined 队列数，跳过队列调整"
+        DEGRADED=1
+        return 1
+    fi
+    append_runtime_restore "restore_nic_queues $(printf '%q' "$iface") $(printf '%q' "$combined")"
+    RUNTIME_SNAPSHOTS["$key"]=1
+}
+
 # =========================
 # 📋 全局变量
 # =========================
-CPU_CORES=$(nproc)
-TOTAL_MEM_KB=$(awk '/MemTotal/{print $2}' /proc/meminfo)
-TOTAL_MEM_MB=$(( TOTAL_MEM_KB / 1024 ))
-TOTAL_MEM_GB=$(( TOTAL_MEM_KB / 1024 / 1024 ))
+CPU_CORES=1
+TOTAL_MEM_KB=0
+TOTAL_MEM_MB=0
+TOTAL_MEM_GB=0
 CLOUD="Unknown"
 BBR_SUPPORTED=1
 SCENE="unknown"
@@ -94,6 +175,7 @@ ARCH=$(uname -m)
 # 📖 用法说明
 # =========================
 usage() {
+    local status="${1:-0}"
     echo -e "${CYAN}用法：${RESET}"
     echo "  $0 [--scene <场景>] [--help]"
     echo
@@ -109,7 +191,7 @@ usage() {
     echo "  $0                       # 交互式菜单"
     echo "  $0 --scene bypass        # 直接指定旁路由"
     echo "  $0 --scene sbc           # 直接指定单片机"
-    exit 0
+    exit "$status"
 }
 
 # =========================
@@ -122,7 +204,7 @@ parse_args() {
             --scene)
                 shift
                 if [[ -z "${1:-}" ]]; then
-                    err "--scene 需要指定场景名"; usage
+                    err "--scene 需要指定场景名"; usage 2
                 fi
                 local valid=0
                 for s in $valid_scenes; do
@@ -137,7 +219,7 @@ parse_args() {
                 ;;
             --help|-h) usage ;;
             *)
-                err "未知参数: $1"; usage
+                err "未知参数: $1"; usage 2
                 ;;
         esac
     done
@@ -147,22 +229,33 @@ parse_args() {
 # 🛡 前置检查
 # =========================
 preflight_check() {
-    log_step "前置检查"
-
-    [[ $EUID -ne 0 ]] && { err "必须使用 root 权限运行"; exit 1; }
+    if [[ $EUID -ne 0 ]]; then
+        echo -e "${RED}[❌]${RESET} 必须使用 root 权限运行" >&2
+        exit 1
+    fi
 
     mkdir -p "$(dirname "$LOG_FILE")"
     touch "$LOG_FILE" 2>/dev/null || { err "无法写入日志: $LOG_FILE"; exit 1; }
+    LOG_READY=1
+    log_step "前置检查"
+
+    local missing=()
+    for cmd in awk sysctl nproc grep sed mktemp uname; do
+        command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
+    done
+    [[ ${#missing[@]} -gt 0 ]] && { err "缺少命令: ${missing[*]}"; exit 1; }
 
     local kver
     kver=$(uname -r | awk -F. '{print $1*100+$2}')
     [[ "$kver" -lt 409 ]] && { warn "内核 $(uname -r) < 4.9，BBR 不可用"; BBR_SUPPORTED=0; }
 
-    local missing=()
-    for cmd in awk sysctl nproc; do
-        command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
-    done
-    [[ ${#missing[@]} -gt 0 ]] && { err "缺少命令: ${missing[*]}"; exit 1; }
+    CPU_CORES=$(nproc 2>/dev/null || echo 1)
+    [[ "$CPU_CORES" =~ ^[1-9][0-9]*$ ]] || CPU_CORES=1
+    TOTAL_MEM_KB=$(awk '/MemTotal/{print $2; exit}' /proc/meminfo 2>/dev/null || echo 0)
+    [[ "$TOTAL_MEM_KB" =~ ^[0-9]+$ ]] || TOTAL_MEM_KB=0
+    [[ "$TOTAL_MEM_KB" -gt 0 ]] || { err "无法读取系统内存信息"; exit 1; }
+    TOTAL_MEM_MB=$(( TOTAL_MEM_KB / 1024 ))
+    TOTAL_MEM_GB=$(( TOTAL_MEM_KB / 1024 / 1024 ))
 
     ok "预检通过（内核: $(uname -r) | 架构: $ARCH | CPU: ${CPU_CORES}核 | 内存: ${TOTAL_MEM_MB}MB）"
 }
@@ -260,12 +353,102 @@ confirm_action() {
 # =========================
 backup_sysctl() {
     log_step "备份现有配置"
-    mkdir -p "$BACKUP_DIR"
-    for f in /etc/sysctl.conf /etc/sysctl.d/*.conf; do
-        [[ -f "$f" ]] && cp "$f" "$BACKUP_DIR/" && log "已备份: $f"
+    mkdir -p "$BACKUP_DIR/etc/sysctl.d" "$BACKUP_DIR/etc/security" "$BACKUP_DIR/etc/modules-load.d" \
+        || { err "无法创建备份目录: $BACKUP_DIR"; exit 1; }
+    if [[ -f /etc/sysctl.conf ]]; then
+        cp -a /etc/sysctl.conf "$BACKUP_DIR/etc/sysctl.conf" \
+            || { err "无法备份 /etc/sysctl.conf"; exit 1; }
+    fi
+    for f in /etc/sysctl.d/*.conf; do
+        [[ -f "$f" ]] || continue
+        cp -a "$f" "$BACKUP_DIR/etc/sysctl.d/" \
+            || { err "无法备份 $f"; exit 1; }
     done
-    sysctl -a > "$BACKUP_DIR/runtime_snapshot.txt" 2>/dev/null || true
-    ok "备份 → $BACKUP_DIR（回滚：cp $BACKUP_DIR/*.conf /etc/sysctl.d/ && sysctl --system）"
+    if [[ -f /etc/security/limits.conf ]]; then
+        cp -a /etc/security/limits.conf "$BACKUP_DIR/etc/security/limits.conf" \
+            || { err "无法备份 /etc/security/limits.conf"; exit 1; }
+    fi
+    if [[ -f /etc/modules-load.d/netfilter.conf ]]; then
+        cp -a /etc/modules-load.d/netfilter.conf "$BACKUP_DIR/etc/modules-load.d/netfilter.conf" \
+            || { err "无法备份 /etc/modules-load.d/netfilter.conf"; exit 1; }
+    fi
+    : > "$BACKUP_DIR/runtime_snapshot.txt" \
+        || { err "无法创建 sysctl 运行时快照"; exit 1; }
+    if ! sysctl -a >> "$BACKUP_DIR/runtime_snapshot.txt" 2>/dev/null; then
+        warn "sysctl 运行时快照存在不可读取项，已保留可读取部分"
+    fi
+    if ! cat > "$BACKUP_DIR/RESTORE.txt" <<EOF
+恢复前请确认备份内容，然后执行：
+  rm -f $SYSCTL_CONF /etc/security/limits.conf /etc/modules-load.d/netfilter.conf
+  test ! -f $BACKUP_DIR/etc/sysctl.conf || cp -a $BACKUP_DIR/etc/sysctl.conf /etc/sysctl.conf
+  cp -a $BACKUP_DIR/etc/sysctl.d/. /etc/sysctl.d/
+  test ! -f $BACKUP_DIR/etc/security/limits.conf || cp -a $BACKUP_DIR/etc/security/limits.conf /etc/security/limits.conf
+  test ! -f $BACKUP_DIR/etc/modules-load.d/netfilter.conf || cp -a $BACKUP_DIR/etc/modules-load.d/netfilter.conf /etc/modules-load.d/netfilter.conf
+  sysctl --system
+
+恢复本轮 IRQ / RPS / 网卡队列 / 磁盘调度器运行时改动：
+  $BACKUP_DIR/RESTORE_RUNTIME.sh
+EOF
+    then
+        err "无法生成恢复说明: $BACKUP_DIR/RESTORE.txt"
+        exit 1
+    fi
+
+    RUNTIME_RESTORE_SCRIPT="$BACKUP_DIR/RESTORE_RUNTIME.sh"
+    if ! cat > "$RUNTIME_RESTORE_SCRIPT" <<'EOF'; then
+#!/bin/bash
+set -uo pipefail
+
+FAILURES=0
+
+restore_value() {
+    local path="$1"
+    local value="$2"
+    if [[ ! -e "$path" ]]; then
+        printf '⚠️  跳过已不存在的运行时路径: %s\n' "$path" >&2
+        FAILURES=$((FAILURES + 1))
+    elif ! printf '%s\n' "$value" > "$path"; then
+        printf '❌ 无法恢复运行时路径: %s\n' "$path" >&2
+        FAILURES=$((FAILURES + 1))
+    else
+        printf '✅ 已恢复: %s\n' "$path"
+    fi
+}
+
+restore_nic_queues() {
+    local iface="$1"
+    local combined="$2"
+    if ! command -v ethtool >/dev/null 2>&1; then
+        printf '❌ 缺少 ethtool，无法恢复 %s 队列数\n' "$iface" >&2
+        FAILURES=$((FAILURES + 1))
+    elif ! ethtool -L "$iface" combined "$combined"; then
+        printf '❌ 无法恢复 %s combined 队列数为 %s\n' "$iface" "$combined" >&2
+        FAILURES=$((FAILURES + 1))
+    else
+        printf '✅ 已恢复 %s combined 队列数为 %s\n' "$iface" "$combined"
+    fi
+}
+
+finish_restore() {
+    local status=$?
+    trap - EXIT
+    if [[ "$FAILURES" -gt 0 ]]; then
+        status=1
+        printf '❌ 运行时恢复存在 %s 个失败项\n' "$FAILURES" >&2
+    else
+        printf '✅ 运行时恢复完成\n'
+    fi
+    exit "$status"
+}
+
+trap finish_restore EXIT
+EOF
+        err "无法生成运行时恢复脚本: $RUNTIME_RESTORE_SCRIPT"
+        exit 1
+    fi
+    chmod 0700 "$RUNTIME_RESTORE_SCRIPT" \
+        || { err "无法设置运行时恢复脚本权限"; exit 1; }
+    ok "备份 → $BACKUP_DIR（恢复脚本: $RUNTIME_RESTORE_SCRIPT）"
 }
 
 # =========================
@@ -277,8 +460,8 @@ optimize_numa() {
     command -v numactl >/dev/null 2>&1 || { warn "未安装 numactl，跳过"; return 0; }
     local nodes; nodes=$(numactl --hardware 2>/dev/null | awk '/available:/{print $2}')
     if [[ "$nodes" =~ ^[0-9]+$ ]] && [[ "$nodes" -gt 1 ]]; then
-        numactl --interleave=all true 2>/dev/null && ok "NUMA interleave=all（$nodes 节点）" \
-            || warn "NUMA 设置失败（虚拟化环境常见）"
+        ok "检测到 $nodes 个 NUMA 节点，将启用内核自动 NUMA balancing"
+        log "应用进程如需跨节点交错内存，可单独使用 numactl --interleave=all"
     else
         warn "单 NUMA 节点，跳过"
     fi
@@ -301,9 +484,21 @@ optimize_irq() {
         local irq_num; irq_num=$(basename "$irq_dir")
         [[ "$irq_num" =~ ^[0-9]+$ ]] || continue
         if [[ "$use_list" -eq 1 && -f "${irq_dir}smp_affinity_list" ]]; then
-            echo "$cpu_list" > "${irq_dir}smp_affinity_list" 2>/dev/null && count=$((count + 1)) || true
+            snapshot_runtime_value "${irq_dir}smp_affinity_list" || continue
+            if echo "$cpu_list" > "${irq_dir}smp_affinity_list" 2>/dev/null; then
+                count=$((count + 1))
+            else
+                warn "IRQ $irq_num 亲和性写入失败"
+                DEGRADED=1
+            fi
         elif [[ -f "${irq_dir}smp_affinity" ]]; then
-            echo "$cpu_mask" > "${irq_dir}smp_affinity" 2>/dev/null && count=$((count + 1)) || true
+            snapshot_runtime_value "${irq_dir}smp_affinity" || continue
+            if echo "$cpu_mask" > "${irq_dir}smp_affinity" 2>/dev/null; then
+                count=$((count + 1))
+            else
+                warn "IRQ $irq_num 亲和性写入失败"
+                DEGRADED=1
+            fi
         fi
     done
     ok "IRQ 亲和性已更新（$count 条）"
@@ -323,24 +518,72 @@ optimize_100g() {
         [[ "$speed" =~ ^[0-9]+$ ]] || speed=0
         [[ "$speed" -ge 100000 ]] || continue
         found=1; ok "100G+ 网卡: $name（${speed}Mb/s）"
-        command -v ethtool >/dev/null 2>&1 && {
-            ethtool -L "$name" combined "$CPU_CORES" 2>/dev/null \
-                && ok "  └─ 队列数=$CPU_CORES" || warn "  └─ 队列调整失败"
-        }
-        echo 4096 > /proc/sys/net/core/rps_sock_flow_entries 2>/dev/null || true
-        local rps_cpus
-        if [[ "$CPU_CORES" -le 32 ]]; then
-            rps_cpus=$(printf "%x" $(( (1 << CPU_CORES) - 1 )))
-        else
-            local pg=$(( CPU_CORES / 32 )) pf=""
-            for (( i=0; i<pg; i++ )); do pf+="ffffffff"; done
-            rps_cpus="${pf}$(printf '%x' $(( (1 << (CPU_CORES % 32)) - 1 )))"
+        if ! command -v ethtool >/dev/null 2>&1; then
+            warn "  └─ 缺少 ethtool，跳过队列调整"
+            DEGRADED=1
+            continue
         fi
+
+        # 恢复脚本先恢复原队列数，再恢复各原始 RX 队列的 RPS 值。
+        # 因此必须在改变 combined 数量前完成全部快照。
+        local snapshots_ready=1
+        snapshot_nic_queues "$name" || snapshots_ready=0
+        local rxq
         for rxq in "${iface}queues/rx-"*/rps_cpus; do
-            [[ -f "$rxq" ]] && echo "$rps_cpus" > "$rxq" 2>/dev/null || true
+            [[ -f "$rxq" ]] || continue
+            snapshot_runtime_value "$rxq" || snapshots_ready=0
+        done
+        if [[ -f /proc/sys/net/core/rps_sock_flow_entries ]]; then
+            snapshot_runtime_value /proc/sys/net/core/rps_sock_flow_entries \
+                || snapshots_ready=0
+        else
+            warn "  └─ 内核不提供 rps_sock_flow_entries"
+            DEGRADED=1
+            snapshots_ready=0
+        fi
+        if [[ "$snapshots_ready" -ne 1 ]]; then
+            warn "  └─ 运行时状态快照不完整，已跳过该网卡调整"
+            DEGRADED=1
+            continue
+        fi
+
+        if ethtool -L "$name" combined "$CPU_CORES" 2>/dev/null; then
+            ok "  └─ 队列数=$CPU_CORES"
+        else
+            warn "  └─ 队列调整失败"
+            DEGRADED=1
+            continue
+        fi
+
+        echo 4096 > /proc/sys/net/core/rps_sock_flow_entries 2>/dev/null \
+            || { warn "  └─ rps_sock_flow_entries 写入失败"; DEGRADED=1; }
+        local rps_cpus
+        rps_cpus=$(cpu_mask_for_count "$CPU_CORES")
+        for rxq in "${iface}queues/rx-"*/rps_cpus; do
+            [[ -f "$rxq" ]] || continue
+            echo "$rps_cpus" > "$rxq" 2>/dev/null \
+                || { warn "  └─ RPS CPU 掩码写入失败: $rxq"; DEGRADED=1; }
         done
     done
-    [[ "$found" -eq 0 ]] && warn "未检测到 100G+ 网卡"
+    if [[ "$found" -eq 0 ]]; then
+        warn "未检测到 100G+ 网卡"
+    fi
+    return 0
+}
+
+cpu_mask_for_count() {
+    local count="$1" groups remainder index part mask=""
+    groups=$(( (count + 31) / 32 ))
+    remainder=$(( count % 32 ))
+    for (( index=0; index<groups; index++ )); do
+        if [[ "$index" -eq $((groups - 1)) && "$remainder" -ne 0 ]]; then
+            part=$(printf '%x' $(( (1 << remainder) - 1 )))
+        else
+            part="ffffffff"
+        fi
+        mask="${part}${mask:+,$mask}"
+    done
+    printf '%s' "$mask"
 }
 
 # =========================
@@ -355,29 +598,47 @@ optimize_disk_io() {
         [[ "$name" =~ ^(loop|ram|dm-|md) ]] && continue
         local sched_file="${disk}queue/scheduler"
         [[ -f "$sched_file" ]] || continue
-        local current rotational=1
+        local current current_scheduler rotational=1
         current=$(cat "$sched_file")
+        current_scheduler=$(sed -n 's/.*\[\([^]]*\)\].*/\1/p' <<< "$current")
+        if [[ -z "$current_scheduler" ]]; then
+            warn "  💿 $name 无法解析当前调度器，跳过"
+            DEGRADED=1
+            continue
+        fi
         rotational=$(cat "${disk}queue/rotational" 2>/dev/null || echo 1)
 
-        local target
+        local target="" candidate available
+        available=" ${current//[\[\]]/} "
         if [[ "$SCENE" == "sbc" ]]; then
-            if echo "$current" | grep -q "none"; then target="none"
-            else target="noop"; fi
+            for candidate in none mq-deadline noop; do
+                [[ "$available" == *" $candidate "* ]] && { target="$candidate"; break; }
+            done
         elif [[ "$rotational" -eq 0 ]]; then
-            if echo "$current" | grep -q "none"; then target="none"
-            elif echo "$current" | grep -q "mq-deadline"; then target="mq-deadline"
-            else target="deadline"; fi
+            for candidate in none mq-deadline deadline; do
+                [[ "$available" == *" $candidate "* ]] && { target="$candidate"; break; }
+            done
         else
-            if echo "$current" | grep -q "bfq"; then target="bfq"
-            else target="cfq"; fi
+            for candidate in bfq mq-deadline deadline cfq; do
+                [[ "$available" == *" $candidate "* ]] && { target="$candidate"; break; }
+            done
         fi
 
-        echo "$target" > "$sched_file" 2>/dev/null \
-            && ok "  💿 $name（$([ "$rotational" -eq 0 ] && echo SSD || echo HDD/Flash)）→ $target" \
-            || warn "  💿 $name 调度器 $target 不支持，跳过"
-        optimized=$((optimized + 1))
+        [[ -n "$target" ]] || { warn "  💿 $name 未找到可用调度器，跳过"; continue; }
+
+        snapshot_runtime_value "$sched_file" "$current_scheduler" || continue
+        if echo "$target" > "$sched_file" 2>/dev/null; then
+            ok "  💿 $name（$([ "$rotational" -eq 0 ] && echo SSD || echo HDD/Flash)）→ $target"
+            optimized=$((optimized + 1))
+        else
+            warn "  💿 $name 调度器 $target 不支持，跳过"
+            DEGRADED=1
+        fi
     done
-    [[ "$optimized" -eq 0 ]] && warn "未检测到可优化磁盘"
+    if [[ "$optimized" -eq 0 ]]; then
+        warn "未检测到可优化磁盘"
+    fi
+    return 0
 }
 
 # =========================
@@ -392,17 +653,19 @@ apply_router_sysctl() {
     [[ "$ct_max" -lt 65536 ]]   && ct_max=65536
     [[ "$ct_max" -gt 2097152 ]] && ct_max=2097152
 
-    for mod in nf_conntrack nf_conntrack_ipv4 nf_conntrack_ipv6; do
-        modprobe "$mod" 2>/dev/null && log "  模块: $mod" || true
-    done
-    cat > /etc/modules-load.d/netfilter.conf <<EOF
+    modprobe nf_conntrack 2>/dev/null && log "  模块: nf_conntrack" || true
+    mkdir -p /etc/modules-load.d \
+        || { err "无法创建 /etc/modules-load.d"; exit 1; }
+    if ! cat > /etc/modules-load.d/netfilter.conf <<EOF; then
 nf_conntrack
-nf_conntrack_ipv4
-nf_conntrack_ipv6
 EOF
+        err "无法写入 conntrack 模块持久化配置"
+        exit 1
+    fi
 
-    cat > "$SYSCTL_CONF" <<EOF
-# 🌉 Linux 优化 v9.0 - 主路由场景 | $(date)
+    prepare_sysctl_config
+    if ! cat > "$SYSCTL_CONFIG_TMP" <<EOF; then
+# 🌉 Linux 优化 v2.0 - 主路由场景 | $(date)
 # 环境: $CLOUD | CPU: ${CPU_CORES}核 | 内存: ${TOTAL_MEM_MB}MB
 
 net.ipv4.ip_forward = 1
@@ -454,6 +717,10 @@ fs.file-max = 1048576
 fs.nr_open = 1048576
 net.ipv4.ip_local_port_range = 1024 65535
 EOF
+        err "主路由 sysctl 配置生成失败"
+        exit 1
+    fi
+    commit_sysctl_config
     _apply_sysctl_file "router"
     sysctl -w net.netfilter.nf_conntrack_max="$ct_max" 2>/dev/null || true
 }
@@ -470,14 +737,15 @@ apply_bypass_sysctl() {
     [[ "$ct_max" -lt 32768 ]]  && ct_max=32768
     [[ "$ct_max" -gt 524288 ]] && ct_max=524288
 
-    for mod in nf_conntrack nf_conntrack_ipv4 nf_conntrack_ipv6; do
-        modprobe "$mod" 2>/dev/null && log "  模块: $mod" || true
-    done
-    cat > /etc/modules-load.d/netfilter.conf <<EOF
+    modprobe nf_conntrack 2>/dev/null && log "  模块: nf_conntrack" || true
+    mkdir -p /etc/modules-load.d \
+        || { err "无法创建 /etc/modules-load.d"; exit 1; }
+    if ! cat > /etc/modules-load.d/netfilter.conf <<EOF; then
 nf_conntrack
-nf_conntrack_ipv4
-nf_conntrack_ipv6
 EOF
+        err "无法写入 conntrack 模块持久化配置"
+        exit 1
+    fi
 
     local cc_algo="cubic" qdisc="fq_codel"
     if [[ "$BBR_SUPPORTED" -eq 1 ]] \
@@ -490,8 +758,9 @@ EOF
     tcp_mid=$(awk "BEGIN{printf \"%d\", int(${TOTAL_MEM_KB}*0.12/4)}")
     tcp_hi=$(awk  "BEGIN{printf \"%d\", int(${TOTAL_MEM_KB}*0.16/4)}")
 
-    cat > "$SYSCTL_CONF" <<EOF
-# 🌉 Linux 优化 v9.0 - 旁路由场景 | $(date)
+    prepare_sysctl_config
+    if ! cat > "$SYSCTL_CONFIG_TMP" <<EOF; then
+# 🌉 Linux 优化 v2.0 - 旁路由场景 | $(date)
 # 环境: $CLOUD | CPU: ${CPU_CORES}核 | 内存: ${TOTAL_MEM_MB}MB
 
 net.ipv4.ip_forward = 1
@@ -549,6 +818,10 @@ fs.file-max = 1048576
 fs.nr_open = 1048576
 net.ipv4.ip_local_port_range = 1024 65535
 EOF
+        err "旁路由 sysctl 配置生成失败"
+        exit 1
+    fi
+    commit_sysctl_config
     _apply_sysctl_file "bypass"
     sysctl -w net.netfilter.nf_conntrack_max="$ct_max" 2>/dev/null || true
     sysctl -w net.ipv4.conf.all.route_localnet=1 >/dev/null 2>&1 \
@@ -562,8 +835,9 @@ apply_sbc_sysctl() {
     [[ "$SCENE" != "sbc" ]] && return 0
     log_step "单片机 SBC sysctl"
 
-    cat > "$SYSCTL_CONF" <<EOF
-# 🌉 Linux 优化 v9.0 - 单片机 SBC 场景 | $(date)
+    prepare_sysctl_config
+    if ! cat > "$SYSCTL_CONFIG_TMP" <<EOF; then
+# 🌉 Linux 优化 v2.0 - 单片机 SBC 场景 | $(date)
 # 架构: $ARCH | CPU: ${CPU_CORES}核 | 内存: ${TOTAL_MEM_MB}MB
 
 # ── 闪存寿命保护（核心）──
@@ -600,6 +874,10 @@ fs.nr_open = 65536
 
 net.ipv4.ip_local_port_range = 1024 65535
 EOF
+        err "SBC sysctl 配置生成失败"
+        exit 1
+    fi
+    commit_sysctl_config
     _apply_sysctl_file "sbc"
 }
 
@@ -640,7 +918,7 @@ apply_server_sysctl() {
             ;;
     esac
 
-    local cc_algo="cubic" qdisc="pfifo_fast"
+    local cc_algo="cubic" qdisc="fq_codel"
     if [[ "$BBR_SUPPORTED" -eq 1 ]] && modprobe tcp_bbr 2>/dev/null; then
         cc_algo="bbr"; qdisc="fq"
         ok "BBR + fq 已启用"
@@ -651,8 +929,9 @@ apply_server_sysctl() {
     tcp_mid=$(awk "BEGIN{printf \"%d\", int(${TOTAL_MEM_KB}*0.15/4)}")
     tcp_hi=$(awk  "BEGIN{printf \"%d\", int(${TOTAL_MEM_KB}*0.20/4)}")
 
-    cat > "$SYSCTL_CONF" <<EOF
-# 🌉 Linux 优化 v9.0 - 服务器场景: ${SCENE} | $(date)
+    prepare_sysctl_config
+    if ! cat > "$SYSCTL_CONFIG_TMP" <<EOF; then
+# 🌉 Linux 优化 v2.0 - 服务器场景: ${SCENE} | $(date)
 # 环境: $CLOUD | CPU: ${CPU_CORES}核 | 内存: ${TOTAL_MEM_MB}MB
 
 net.core.somaxconn = ${somaxconn}
@@ -695,6 +974,14 @@ net.ipv4.tcp_syncookies = 1
 net.ipv4.conf.all.accept_redirects = 0
 net.ipv4.conf.all.send_redirects = 0
 EOF
+        err "服务器 sysctl 配置生成失败"
+        exit 1
+    fi
+    if [[ "$SCENE" == "baremetal" ]]; then
+        echo "kernel.numa_balancing = 1" >> "$SYSCTL_CONFIG_TMP" \
+            || { err "NUMA balancing 参数写入失败"; exit 1; }
+    fi
+    commit_sysctl_config
     _apply_sysctl_file "$SCENE"
 }
 
@@ -704,19 +991,48 @@ EOF
 apply_cloud_tuning() {
     [[ "$SCENE" =~ ^(router|bypass|sbc)$ ]] && return 0
     log_step "云环境专项适配（$CLOUD）"
+    local changed=0
     case "$CLOUD" in
         AWS)
-            sysctl -w net.core.rmem_max=536870912 >/dev/null 2>&1 && ok "AWS: rmem_max=512MB" || true
-            sysctl -w net.ipv4.tcp_mtu_probing=1  >/dev/null 2>&1 && ok "AWS: MTU 探测已启用" || true ;;
+            stage_existing_sysctl_config
+            if ! cat >> "$SYSCTL_CONFIG_TMP" <<'EOF'; then
+net.core.rmem_max = 536870912
+net.ipv4.tcp_mtu_probing = 1
+EOF
+                err "AWS sysctl 参数写入失败"
+                exit 1
+            fi
+            changed=1
+            ok "AWS: 已持久化 rmem_max=512MB 与 MTU 探测" ;;
         GCP)
-            sysctl -w net.core.netdev_max_backlog=65535 >/dev/null 2>&1 && ok "GCP: backlog=65535" || true
-            sysctl -w net.ipv4.tcp_mtu_probing=1        >/dev/null 2>&1 || true ;;
+            stage_existing_sysctl_config
+            if ! cat >> "$SYSCTL_CONFIG_TMP" <<'EOF'; then
+net.core.netdev_max_backlog = 65535
+net.ipv4.tcp_mtu_probing = 1
+EOF
+                err "GCP sysctl 参数写入失败"
+                exit 1
+            fi
+            changed=1
+            ok "GCP: 已持久化 backlog=65535 与 MTU 探测" ;;
         Azure)
-            sysctl -w net.ipv4.tcp_tw_reuse=1    >/dev/null 2>&1 && ok "Azure: tw_reuse=1" || true
-            sysctl -w net.ipv4.tcp_fin_timeout=10 >/dev/null 2>&1 || true ;;
+            stage_existing_sysctl_config
+            if ! cat >> "$SYSCTL_CONFIG_TMP" <<'EOF'; then
+net.ipv4.tcp_tw_reuse = 1
+net.ipv4.tcp_fin_timeout = 10
+EOF
+                err "Azure sysctl 参数写入失败"
+                exit 1
+            fi
+            changed=1
+            ok "Azure: 已持久化 tw_reuse 与 fin_timeout" ;;
         BareMetal) ok "裸机模式：全量优化 🚀" ;;
         *)         warn "虚拟化/未知环境，仅通用参数" ;;
     esac
+    if [[ "$changed" -eq 1 ]]; then
+        commit_sysctl_config
+    fi
+    _apply_sysctl_file "cloud-$CLOUD"
 }
 
 # =========================
@@ -729,20 +1045,46 @@ apply_ulimit() {
         sbc)           nofile=65536   ;;
         vps_low)       nofile=262144  ;;
         router|bypass) nofile=1048576 ;;
-        *)             nofile=2097152 ;;
+        vps)           nofile=1048576 ;;
+        baremetal)     nofile=2097152 ;;
     esac
-    local lc="/etc/security/limits.conf" marker="# linux-optimizer-v9"
-    grep -q "$marker" "$lc" 2>/dev/null \
-        && sed -i "/$marker/,/# end-linux-optimizer-v9/d" "$lc"
-    cat >> "$lc" <<EOF
+    local kernel_limit
+    local limit_name
+    for limit_name in fs.nr_open fs.file-max; do
+        kernel_limit=$(sysctl -n "$limit_name" 2>/dev/null || echo 0)
+        if [[ "$kernel_limit" =~ ^[1-9][0-9]*$ ]] && (( nofile > kernel_limit )); then
+            warn "nofile=$nofile 高于当前 $limit_name=$kernel_limit，已下调"
+            nofile=$kernel_limit
+        fi
+    done
+    local lc="/etc/security/limits.conf" marker="# linux-optimizer-v2"
+    mkdir -p "$(dirname "$lc")" \
+        || { err "无法创建 limits.conf 目录"; exit 1; }
+    touch "$lc" \
+        || { err "无法创建 limits.conf"; exit 1; }
+    LIMITS_TMP=$(mktemp "$(dirname "$lc")/.limits.conf.XXXXXX") \
+        || { err "无法创建 limits.conf 临时文件"; exit 1; }
+    cp -p "$lc" "$LIMITS_TMP" \
+        || { err "无法复制 limits.conf"; exit 1; }
+    sed -i '/# linux-optimizer-v9/,/# end-linux-optimizer-v9/d' "$LIMITS_TMP" \
+        || { err "清理旧 limits.conf 配置失败"; exit 1; }
+    sed -i '/# linux-optimizer-v2/,/# end-linux-optimizer-v2/d' "$LIMITS_TMP" \
+        || { err "清理当前 limits.conf 配置失败"; exit 1; }
+    if ! cat >> "$LIMITS_TMP" <<EOF; then
 
 $marker
 *    soft nofile ${nofile}
 *    hard nofile ${nofile}
 root soft nofile ${nofile}
 root hard nofile ${nofile}
-# end-linux-optimizer-v9
+# end-linux-optimizer-v2
 EOF
+        err "limits.conf 配置生成失败"
+        exit 1
+    fi
+    mv -f "$LIMITS_TMP" "$lc" \
+        || { err "无法原子写入 limits.conf"; exit 1; }
+    LIMITS_TMP=""
     ulimit -n "$nofile" 2>/dev/null && ok "ulimit -n = $nofile（当前会话生效）" \
         || warn "当前 shell 设置失败，重登录后生效"
 }
@@ -752,30 +1094,32 @@ EOF
 # =========================
 verify_settings() {
     log_step "验证关键参数"
-    declare -A checks
+    local -a keys
     case "$SCENE" in
         router)
-            checks=(["net.ipv4.ip_forward"]="1"
-                    ["net.ipv4.tcp_syncookies"]="1"
-                    ["vm.swappiness"]="20") ;;
+            keys=(net.ipv4.ip_forward net.ipv4.tcp_syncookies vm.swappiness) ;;
         bypass)
-            checks=(["net.ipv4.ip_forward"]="1"
-                    ["net.ipv4.conf.all.route_localnet"]="1"
-                    ["net.ipv4.conf.all.rp_filter"]="0"
-                    ["net.ipv4.tcp_syncookies"]="1") ;;
+            keys=(net.ipv4.ip_forward net.ipv4.conf.all.route_localnet
+                  net.ipv4.conf.all.rp_filter net.ipv4.tcp_syncookies) ;;
         sbc)
-            checks=(["vm.swappiness"]="60"
-                    ["vm.dirty_ratio"]="40"
-                    ["vm.vfs_cache_pressure"]="50") ;;
+            keys=(vm.swappiness vm.dirty_ratio vm.vfs_cache_pressure) ;;
         *)
-            checks=(["net.core.somaxconn"]="$(sysctl -n net.core.somaxconn 2>/dev/null || echo 0)"
-                    ["net.ipv4.tcp_tw_reuse"]="1"
-                    ["net.ipv4.tcp_syncookies"]="1"
-                    ["fs.file-max"]="$(sysctl -n fs.file-max 2>/dev/null || echo 0)") ;;
+            keys=(net.core.somaxconn net.ipv4.tcp_tw_reuse
+                  net.ipv4.tcp_syncookies fs.file-max) ;;
     esac
     local pass=0 fail=0
-    for key in "${!checks[@]}"; do
-        local exp="${checks[$key]}"
+    local key exp
+    for key in "${keys[@]}"; do
+        exp=$(awk -F= -v wanted="$key" '
+            {
+                name=$1; gsub(/^[[:space:]]+|[[:space:]]+$/, "", name)
+            }
+            name == wanted {
+                value=$2; gsub(/^[[:space:]]+|[[:space:]]+$/, "", value); found=value
+            }
+            END {print found}
+        ' "$SYSCTL_CONF")
+        [[ -n "$exp" ]] || { warn "  ✘ 配置中缺少 $key"; fail=$((fail + 1)); continue; }
         local act; act=$(sysctl -n "$key" 2>/dev/null || echo "N/A")
         if [[ "$act" == "$exp" ]]; then
             ok "  ✔ $key = $act"; pass=$((pass + 1))
@@ -784,7 +1128,11 @@ verify_settings() {
         fi
     done
     ok "验证完成：✔ $pass  ✘ $fail"
-    [[ "$fail" -gt 0 ]] && warn "异常项可能由内核版本或虚拟化限制导致"
+    if [[ "$fail" -gt 0 ]]; then
+        warn "异常项可能由内核版本或虚拟化限制导致"
+        DEGRADED=1
+    fi
+    return 0
 }
 
 # =========================
@@ -792,16 +1140,20 @@ verify_settings() {
 # =========================
 _apply_sysctl_file() {
     local label="$1"
-    if sysctl --system > /tmp/sysctl_out.txt 2>&1; then
+    SYSCTL_TMP=$(mktemp /tmp/linux-optimizer-sysctl.XXXXXX) \
+        || { err "无法创建 sysctl 临时日志"; return 1; }
+    if sysctl --system > "$SYSCTL_TMP" 2>&1; then
         ok "$label sysctl 全部应用成功"
     else
         local errs
-        errs=$(grep -v "^$\|^Applying\|^#" /tmp/sysctl_out.txt \
+        errs=$(grep -v "^$\|^Applying\|^#" "$SYSCTL_TMP" \
                | grep -i "error\|invalid" || true)
         [[ -n "$errs" ]] && while IFS= read -r l; do warn "  $l"; done <<< "$errs"
-        ok "$label sysctl 主要参数已应用"
+        warn "$label sysctl 存在未应用参数，请核对上方提示"
+        DEGRADED=1
     fi
-    rm -f /tmp/sysctl_out.txt
+    rm -f "$SYSCTL_TMP"
+    SYSCTL_TMP=""
 }
 
 # =========================
@@ -827,14 +1179,21 @@ show_summary() {
     printf "${CYAN}║${RESET}  📄 配置文件 : %-30s${CYAN}║${RESET}\n" "$SYSCTL_CONF"
     printf "${CYAN}║${RESET}  💾 备份     : %-30s${CYAN}║${RESET}\n" "$(basename "$BACKUP_DIR")"
     printf "${CYAN}╠══════════════════════════════════════════════╣${RESET}\n"
-    printf "${CYAN}║${RESET}  🔄 回滚：sysctl --system（还原备份后）      ${CYAN}║${RESET}\n"
+    printf "${CYAN}║${RESET}  🔄 回滚：见备份目录 RESTORE.txt            ${CYAN}║${RESET}\n"
     printf "${CYAN}║${RESET}  ⚡ 跳过菜单：$0 --scene <场景>${CYAN}║${RESET}\n"
     printf "${CYAN}╚══════════════════════════════════════════════╝${RESET}\n"
     echo
     warn "⚠️  ulimit 重登录后对新进程完全生效"
-    [[ "$SCENE" =~ ^(router|bypass)$ ]] && warn "⚠️  conntrack 模块已持久化，重启自动加载"
-    [[ "$SCENE" == "bypass" ]] && warn "⚠️  route_localnet=1 已开启，tproxy/redirect 正常工作"
-    [[ "$SCENE" == "sbc" ]] && warn "⚠️  dirty_ratio=40 保护闪存，写入延迟略有增加属正常"
+    if [[ "$SCENE" =~ ^(router|bypass)$ ]]; then
+        warn "⚠️  conntrack 模块已持久化，重启自动加载"
+    fi
+    if [[ "$SCENE" == "bypass" ]]; then
+        warn "⚠️  route_localnet=1 已开启，tproxy/redirect 正常工作"
+    fi
+    if [[ "$SCENE" == "sbc" ]]; then
+        warn "⚠️  dirty_ratio=40 保护闪存，写入延迟略有增加属正常"
+    fi
+    return 0
 }
 
 # =========================
@@ -843,10 +1202,10 @@ show_summary() {
 main() {
     parse_args "$@"
 
-    clear
+    [[ -t 1 ]] && command -v clear >/dev/null 2>&1 && clear || true
     echo -e "${CYAN}"
     echo "╔══════════════════════════════════════════════╗"
-    echo "║  🌉 Linux 架构级优化工具 v9.0                ║"
+    echo "║  🌉 Linux 架构级优化工具 v2.0                ║"
     echo "║  VPS | 低配VPS | 旁路由 | 主路由 | 裸机 | SBC ║"
     echo "╚══════════════════════════════════════════════╝"
     echo -e "${RESET}"
@@ -900,6 +1259,21 @@ main() {
 
     verify_settings
     show_summary
+    if [[ "$DEGRADED" -ne 0 ]]; then
+        err "部分关键参数未成功应用，请检查日志并确认内核支持情况"
+        warn "可执行 $RUNTIME_RESTORE_SCRIPT 恢复本轮运行时调优"
+        return 1
+    fi
+    return 0
 }
+
+cleanup() {
+    [[ -n "$SYSCTL_TMP" ]] && rm -f "$SYSCTL_TMP"
+    [[ -n "$SYSCTL_CONFIG_TMP" ]] && rm -f "$SYSCTL_CONFIG_TMP"
+    [[ -n "$LIMITS_TMP" ]] && rm -f "$LIMITS_TMP"
+    return 0
+}
+
+trap cleanup EXIT
 
 main "$@"

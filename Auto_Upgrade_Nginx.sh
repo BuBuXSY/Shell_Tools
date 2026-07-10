@@ -25,7 +25,7 @@
 # 🌉 Nginx 编译安装脚本 v2.1
 # 支持最新主线版本 / 稳定版本
 # By: BuBuXSY
-# Version: 2026-03-06
+# Version: 2026-07-11
 # ====================================================
 
 set -uo pipefail
@@ -43,12 +43,67 @@ C_BLUE="\e[1;34m"; C_CYAN="\e[1;36m"; C_RESET="\e[0m"
 # 📋 全局变量
 # =========================
 LOG_FILE="/var/log/nginx_install_$(date +%Y%m%d_%H%M%S).log"
-BUILD_DIR="/tmp/nginx_build_$$"        # 用 PID 隔离，防多实例冲突
+BUILD_DIR=""
 BACKUP_DIR="/var/backups/nginx"
 NGINX_USER="nginx"
 NGINX_GROUP="nginx"
 CPU_CORES=$(nproc 2>/dev/null || echo 1)
 KTLS_SUPPORTED=0                       # 默认关闭，preflight 中按内核版本覆盖
+VERSION_CHANNEL=""
+ASSUME_YES=0
+LAST_BINARY_BACKUP=""
+LAST_NGINX_CONF_BACKUP=""
+LAST_SYSTEMD_UNIT_BACKUP=""
+SYSTEMD_UNIT_PATH=""
+NGINX_ENABLE_STATE=""
+BINARY_WAS_PRESENT=0
+NGINX_CONF_WAS_PRESENT=0
+SYSTEMD_UNIT_WAS_PRESENT=0
+NGINX_WAS_ACTIVE=0
+INSTALL_PENDING=0
+LOG_READY=0
+RUN_STARTED=0
+
+# 固定第三方依赖，避免构建时静默跟随上游 HEAD。
+NGX_BROTLI_COMMIT="a71f9312c2deb28875acc7bacfdd5695a111aa53"
+NGX_GEOIP2_COMMIT="445df24ef3781e488cee3dfe8a1e111997fc1dfe"
+OPENSSL_VERSION="3.5.7"
+OPENSSL_COMMIT="8cf17aaeb4599f8af87fefd810b5b5fee90fe69e"
+PCRE2_VERSION="10.47"
+PCRE2_SHA256="c08ae2388ef333e8403e670ad70c0a11f1eed021fd88308d7e02f596fcd9dc16"
+ZLIB_VERSION="1.3.1"
+ZLIB_SHA256="9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23"
+
+# =========================
+# 📖 参数说明
+# =========================
+usage() {
+    cat <<EOF
+用法: $0 [--channel mainline|stable] [--yes] [--help]
+
+  --channel  直接选择主线版或稳定版，省略时交互选择
+  --yes      跳过安装确认（适合自动化执行）
+  --help     显示帮助
+EOF
+}
+
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --channel)
+                [[ $# -ge 2 ]] || { echo "❌ --channel 缺少参数" >&2; exit 2; }
+                case "$2" in
+                    mainline|stable) VERSION_CHANNEL="$2" ;;
+                    *) echo "❌ 无效版本通道: $2（仅支持 mainline/stable）" >&2; exit 2 ;;
+                esac
+                shift 2
+                ;;
+            --yes|-y) ASSUME_YES=1; shift ;;
+            --help|-h) usage; exit 0 ;;
+            *) echo "❌ 未知参数: $1" >&2; usage >&2; exit 2 ;;
+        esac
+    done
+}
 
 # =========================
 # 📋 日志系统
@@ -65,7 +120,11 @@ print_msg() {
     esac
     local line
     line="$(date '+%H:%M:%S') ${emoji} ${msg}"
-    echo -e "${color}${line}${C_RESET}" | tee -a "$LOG_FILE"
+    if [[ "$LOG_READY" -eq 1 ]]; then
+        echo -e "${color}${line}${C_RESET}" | tee -a "$LOG_FILE"
+    else
+        echo -e "${color}${line}${C_RESET}"
+    fi
 }
 
 # 带分隔线的步骤标题，视觉更清晰
@@ -79,15 +138,30 @@ print_step() {
 # 🛡 前置检查
 # =========================
 preflight() {
-    print_step "前置检查"
+    # root 权限检查
+    if [[ $EUID -ne 0 ]]; then
+        echo -e "${C_RED}❌ 此脚本必须以 root 权限运行（请使用 sudo 或切换到 root）${C_RESET}" >&2
+        exit 1
+    fi
 
     # 日志目录必须先建，后续所有 print_msg 才能写入
     mkdir -p "$(dirname "$LOG_FILE")" || { echo "❌ 无法创建日志目录"; exit 1; }
-    touch "$LOG_FILE"
+    touch "$LOG_FILE" || { echo "❌ 无法创建日志文件: $LOG_FILE"; exit 1; }
+    LOG_READY=1
+    RUN_STARTED=1
+    print_step "前置检查"
 
-    # root 权限检查
-    if [[ $EUID -ne 0 ]]; then
-        print_msg ERROR "此脚本必须以 root 权限运行（请使用 sudo 或切换到 root）"
+    if ! command -v mktemp >/dev/null 2>&1; then
+        print_msg ERROR "缺少必要命令: mktemp"
+        exit 1
+    fi
+    BUILD_DIR=$(umask 077; mktemp -d /tmp/nginx-build.XXXXXX) \
+        || { print_msg ERROR "无法创建安全的临时编译目录"; exit 1; }
+    chmod 0700 "$BUILD_DIR" \
+        || { print_msg ERROR "无法设置临时编译目录权限"; exit 1; }
+
+    if ! command -v systemctl >/dev/null 2>&1; then
+        print_msg ERROR "未检测到 systemd，本脚本当前仅支持 systemd 服务管理"
         exit 1
     fi
 
@@ -113,9 +187,19 @@ preflight() {
         print_msg WARN "内核 $(uname -r) 低于 4.17，将禁用 kTLS"
     fi
 
-    # 必要命令检查
+    # 查询版本与确认安装前不应修改系统，因此基础查询命令必须预先可用。
     local missing=()
-    for cmd in curl wget tar make gcc git; do
+    for cmd in curl timeout awk grep sort tail id getent find; do
+        command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
+    done
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        print_msg ERROR "缺少查询版本所需基础命令: ${missing[*]}"
+        print_msg INFO "请先安装以上命令，再重新运行脚本"
+        exit 1
+    fi
+
+    missing=()
+    for cmd in wget tar make gcc git sed install sha256sum gpg gpgv; do
         command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
     done
     if [[ ${#missing[@]} -gt 0 ]]; then
@@ -123,6 +207,44 @@ preflight() {
     fi
 
     print_msg SUCCESS "前置检查完成（🖥️  CPU: ${CPU_CORES} 核 | 🐧 内核: $(uname -r)）"
+}
+
+detect_nginx_identity() {
+    [[ -f /etc/nginx/nginx.conf ]] || return 0
+
+    local identity configured_user configured_group
+    identity=$(awk '
+        {
+            sub(/#.*/, "")
+            if ($1 == "user") {
+                gsub(/;/, "", $2)
+                gsub(/;/, "", $3)
+                print $2, $3
+                exit
+            }
+        }
+    ' /etc/nginx/nginx.conf)
+    configured_user=${identity%% *}
+    configured_group=${identity#* }
+    [[ "$configured_group" != "$identity" ]] || configured_group=""
+
+    if [[ -z "$configured_user" ]]; then
+        print_msg WARN "现有 nginx.conf 未声明 worker 用户，将沿用脚本默认值 $NGINX_USER"
+        return 0
+    fi
+    if ! id -u "$configured_user" >/dev/null 2>&1; then
+        print_msg ERROR "现有 nginx.conf 指定了不存在的用户: $configured_user"
+        exit 1
+    fi
+
+    NGINX_USER="$configured_user"
+    if [[ -n "$configured_group" ]]; then
+        NGINX_GROUP="$configured_group"
+    else
+        NGINX_GROUP=$(id -gn "$configured_user") \
+            || { print_msg ERROR "无法确定 $configured_user 的主组"; exit 1; }
+    fi
+    print_msg INFO "保留现有 Nginx worker 身份: $NGINX_USER:$NGINX_GROUP"
 }
 
 # =========================
@@ -176,7 +298,7 @@ install_dependencies() {
                 build-essential ca-certificates zlib1g-dev \
                 libpcre2-dev libssl-dev libgd-dev libgeoip-dev \
                 libxslt1-dev libxml2-dev libmaxminddb-dev \
-                autoconf libtool pkg-config wget curl git cmake \
+                autoconf libtool pkg-config wget curl git cmake gnupg gpgv findutils \
                 || { print_msg ERROR "依赖安装失败，请检查 apt 源"; exit 1; }
             ;;
         centos|rhel|almalinux|rocky)
@@ -186,7 +308,7 @@ install_dependencies() {
                 gcc gcc-c++ make ca-certificates zlib-devel \
                 pcre2-devel openssl-devel gd-devel GeoIP-devel \
                 libxslt-devel libxml2-devel libmaxminddb-devel \
-                wget curl git cmake autoconf libtool pkgconfig \
+                wget curl git cmake autoconf libtool pkgconfig gnupg2 findutils \
                 || { print_msg ERROR "依赖安装失败，请检查 yum 源"; exit 1; }
             ;;
         fedora)
@@ -195,7 +317,7 @@ install_dependencies() {
                 gcc gcc-c++ make ca-certificates zlib-devel \
                 pcre2-devel openssl-devel gd-devel GeoIP-devel \
                 libxslt-devel libxml2-devel libmaxminddb-devel \
-                wget curl git cmake autoconf libtool pkgconfig \
+                wget curl git cmake autoconf libtool pkgconfig gnupg2 findutils \
                 || { print_msg ERROR "依赖安装失败，请检查 dnf 源"; exit 1; }
             ;;
         *)
@@ -213,13 +335,28 @@ install_dependencies() {
 create_nginx_user() {
     print_step "创建 nginx 系统用户"
     # 先确保 home 目录存在（useradd 不会自动创建 -r 用户的 home）
-    mkdir -p /var/cache/nginx
+    mkdir -p /var/cache/nginx \
+        || { print_msg ERROR "无法创建 /var/cache/nginx"; exit 1; }
+
+    if ! getent group "$NGINX_GROUP" >/dev/null 2>&1; then
+        groupadd --system "$NGINX_GROUP" \
+            || { print_msg ERROR "无法创建系统组: $NGINX_GROUP"; exit 1; }
+        print_msg SUCCESS "已创建系统组: $NGINX_GROUP"
+    fi
+
     if ! id -u "$NGINX_USER" &>/dev/null; then
-        useradd -r -s /sbin/nologin -d /var/cache/nginx \
-                -c "Nginx web server" "$NGINX_USER"
+        local nologin_shell
+        nologin_shell=$(command -v nologin 2>/dev/null || printf '/sbin/nologin')
+        useradd -r -g "$NGINX_GROUP" -s "$nologin_shell" -d /var/cache/nginx \
+                -c "Nginx web server" "$NGINX_USER" \
+            || { print_msg ERROR "无法创建系统用户: $NGINX_USER"; exit 1; }
         print_msg SUCCESS "已创建系统用户: $NGINX_USER 👤"
     else
         print_msg INFO "nginx 用户已存在，跳过创建"
+        if ! id -nG "$NGINX_USER" | tr ' ' '\n' | grep -Fxq "$NGINX_GROUP"; then
+            usermod -a -G "$NGINX_GROUP" "$NGINX_USER" \
+                || { print_msg ERROR "无法将 $NGINX_USER 加入 $NGINX_GROUP 组"; exit 1; }
+        fi
     fi
 }
 
@@ -233,14 +370,36 @@ create_directories() {
         /var/cache/nginx/fastcgi_temp /var/cache/nginx/uwsgi_temp
         /var/cache/nginx/scgi_temp /var/log/nginx /etc/nginx/conf.d
         /etc/nginx/sites-available /etc/nginx/sites-enabled
-        /etc/nginx/default.d /usr/share/nginx/html "$BACKUP_DIR"
+        /etc/nginx/default.d
     )
     for dir in "${dirs[@]}"; do
-        mkdir -p "$dir"
+        mkdir -p "$dir" \
+            || { print_msg ERROR "无法创建目录: $dir"; exit 1; }
     done
-    chown -R "$NGINX_USER:$NGINX_GROUP" \
-        /var/cache/nginx /var/log/nginx /usr/share/nginx 2>/dev/null || true
+    install -d -m 0700 "$BACKUP_DIR" \
+        || { print_msg ERROR "无法创建安全备份目录: $BACKUP_DIR"; exit 1; }
+    if [[ ! -d /usr/share/nginx/html ]]; then
+        install -d -o root -g root -m 0755 /usr/share/nginx/html \
+            || { print_msg ERROR "无法创建默认站点目录"; exit 1; }
+    fi
+    chown -R "$NGINX_USER:$NGINX_GROUP" /var/cache/nginx 2>/dev/null \
+        || { print_msg ERROR "无法设置 Nginx 缓存目录所有权"; exit 1; }
+    validate_default_site_permissions
     print_msg SUCCESS "目录结构初始化完成 📁"
+}
+
+validate_default_site_permissions() {
+    local insecure_path
+    insecure_path=$(find /usr/share/nginx -xdev \
+        \( -user "$NGINX_USER" -perm -u=w \
+        -o -group "$NGINX_GROUP" -perm -g=w \
+        -o -perm -o=w \) -print -quit 2>/dev/null) \
+        || { print_msg ERROR "无法检查默认站点目录权限"; exit 1; }
+    if [[ -n "$insecure_path" ]]; then
+        print_msg ERROR "默认站点存在 Nginx worker 可写路径: $insecure_path"
+        print_msg INFO "请由管理员按站点需求修正 owner/group/mode，脚本不会递归改写现有资源权限"
+        exit 1
+    fi
 }
 
 # =========================
@@ -285,41 +444,184 @@ get_nginx_version() {
 }
 
 # =========================
-# 📥 下载文件（带重试，自动判断 TTY 决定是否显示进度条）
+# 📥 下载与密码学校验
 # 修复：--show-progress 在非 TTY（CI/cron）环境输出乱码，改为按 TTY 自动切换
 # =========================
-download_file() {
-    local url=$1 output=$2 desc=$3
+download_resource() {
+    local url=$1 output=$2 desc=$3 min_size=${4:-1}
     print_msg INFO "⬇️  下载 $desc ..."
 
     # 非 TTY 环境（CI/定时任务）关闭进度条，避免日志乱码
-    local progress_flag=""
-    [[ -t 1 ]] && progress_flag="--show-progress"
+    local wget_args=(-q --timeout=60 --tries=1)
+    [[ -t 1 ]] && wget_args+=(--show-progress)
 
     local ok=0
     for attempt in 1 2 3; do
-        # shellcheck disable=SC2086
-        if wget -q $progress_flag --timeout=60 --tries=1 "$url" -O "$output" 2>&1 | tee -a "$LOG_FILE"; then
+        rm -f "$output"
+        if wget "${wget_args[@]}" "$url" -O "$output" 2>&1 | tee -a "$LOG_FILE"; then
             ok=1; break
         fi
-        print_msg WARN "第 $attempt 次下载失败，${attempt}0 秒后重试..."
-        sleep $((attempt * 10))   # 指数退避：10s / 20s / 30s
+        if [[ "$attempt" -lt 3 ]]; then
+            print_msg WARN "第 $attempt 次下载失败，${attempt}0 秒后重试..."
+            sleep $((attempt * 10))
+        fi
     done
 
     if [[ "$ok" -eq 0 ]]; then
+        rm -f "$output"
         print_msg ERROR "❌ 下载 $desc 失败（已重试 3 次）"
         return 1
     fi
 
-    # 基础完整性校验（文件不能为空或极小）
     local size
     size=$(wc -c < "$output")
-    if [[ "$size" -lt 1024 ]]; then
-        print_msg ERROR "❌ 下载文件异常，体积过小（${size}B），可能为错误页面"
+    if [[ "$size" -lt "$min_size" ]]; then
+        rm -f "$output"
+        print_msg ERROR "❌ $desc 体积异常（${size}B，至少应为 ${min_size}B）"
         return 1
     fi
 
     print_msg SUCCESS "✅ 下载完成: $desc（$(numfmt --to=iec "$size" 2>/dev/null || echo "${size}B")）"
+}
+
+validate_tar_archive() {
+    local archive=$1 desc=$2
+
+    local archive_list
+    if ! archive_list=$(tar -tzf "$archive" 2>/dev/null); then
+        rm -f "$archive"
+        print_msg ERROR "❌ $desc 不是有效的 tar.gz 压缩包"
+        return 1
+    fi
+    if grep -Eq '(^/|(^|/)\.\.(/|$))' <<< "$archive_list"; then
+        rm -f "$archive"
+        print_msg ERROR "❌ $desc 包含不安全路径，已拒绝使用"
+        return 1
+    fi
+}
+
+download_verified_archive() {
+    local url=$1 output=$2 desc=$3 expected_sha256=$4
+
+    [[ "$expected_sha256" =~ ^[0-9a-f]{64}$ ]] \
+        || { print_msg ERROR "$desc 缺少有效的固定 SHA-256"; return 1; }
+    download_resource "$url" "$output" "$desc" 1024 || return 1
+
+    local actual_sha256
+    actual_sha256=$(sha256sum "$output" | awk '{print $1}') \
+        || { rm -f "$output"; print_msg ERROR "$desc SHA-256 计算失败"; return 1; }
+    if [[ "$actual_sha256" != "$expected_sha256" ]]; then
+        rm -f "$output"
+        print_msg ERROR "$desc SHA-256 不匹配（期望 $expected_sha256，实际 $actual_sha256）"
+        return 1
+    fi
+
+    validate_tar_archive "$output" "$desc" || return 1
+    print_msg SUCCESS "$desc SHA-256 校验通过 🔐"
+}
+
+download_nginx_source() {
+    local version=$1 output=$2
+    local signature="$output.asc"
+    local keyring="$BUILD_DIR/nginx-source-signers.gpg"
+    local verify_status signer
+    local -a key_specs=(
+        "arut|43387825DDB1BB97EC36BA5D007C8D7C15D87369"
+        "pluknet|D6786CE303D9A9022998DC6CC8464D549AF75C0A"
+        "sb|7338973069ED3F443F4D37DFA64FD5B17ADB39A8"
+        "thresh|13C82A63B603576156E30A4EA0EA981B66B0D967"
+    )
+
+    [[ "$version" =~ ^nginx-[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+        || { print_msg ERROR "Nginx 版本格式非法: $version"; return 1; }
+    download_resource "https://nginx.org/download/${version}.tar.gz" \
+        "$output" "Nginx ${version} 源码" 1024 || return 1
+    validate_tar_archive "$output" "Nginx ${version} 源码" || return 1
+    download_resource "https://nginx.org/download/${version}.tar.gz.asc" \
+        "$signature" "Nginx ${version} 源码签名" 128 || return 1
+
+    : > "$keyring" || { print_msg ERROR "无法创建 Nginx 验签密钥环"; return 1; }
+    chmod 0600 "$keyring" || return 1
+
+    local spec key_name expected_fingerprint key_file key_packet actual_fingerprint
+    for spec in "${key_specs[@]}"; do
+        key_name=${spec%%|*}
+        expected_fingerprint=${spec##*|}
+        key_file="$BUILD_DIR/nginx-${key_name}.key"
+        key_packet="$BUILD_DIR/nginx-${key_name}.gpg"
+        download_resource "https://nginx.org/keys/${key_name}.key" \
+            "$key_file" "Nginx 官方签名公钥 ${key_name}" 128 || return 1
+        actual_fingerprint=$(gpg --batch --show-keys --with-colons --fingerprint \
+            "$key_file" 2>> "$LOG_FILE" \
+            | awk -F: '$1 == "fpr" {print $10; exit}')
+        if [[ "$actual_fingerprint" != "$expected_fingerprint" ]]; then
+            print_msg ERROR "Nginx 公钥 ${key_name} 指纹不匹配"
+            return 1
+        fi
+        if ! gpg --batch --yes --dearmor --output "$key_packet" \
+            "$key_file" 2>> "$LOG_FILE"; then
+            print_msg ERROR "Nginx 公钥 ${key_name} 转换失败"
+            return 1
+        fi
+        cat "$key_packet" >> "$keyring" \
+            || { print_msg ERROR "Nginx 验签密钥环写入失败"; return 1; }
+    done
+
+    if ! verify_status=$(gpgv --status-fd 1 --keyring "$keyring" \
+        "$signature" "$output" 2>> "$LOG_FILE"); then
+        rm -f "$output" "$signature"
+        print_msg ERROR "Nginx ${version} 官方签名校验失败"
+        return 1
+    fi
+    signer=$(awk '$2 == "VALIDSIG" {print $3; exit}' <<< "$verify_status")
+    case "$signer" in
+        43387825DDB1BB97EC36BA5D007C8D7C15D87369|\
+        D6786CE303D9A9022998DC6CC8464D549AF75C0A|\
+        7338973069ED3F443F4D37DFA64FD5B17ADB39A8|\
+        13C82A63B603576156E30A4EA0EA981B66B0D967) ;;
+        *)
+            rm -f "$output" "$signature"
+            print_msg ERROR "Nginx 源码签名者不在固定白名单中: ${signer:-未知}"
+            return 1
+            ;;
+    esac
+
+    print_msg SUCCESS "Nginx ${version} 官方签名校验通过（${signer: -16}）🔐"
+}
+
+clone_pinned_repo() {
+    local url=$1 destination=$2 commit=$3 desc=$4 actual_commit
+    local attempt ok=0
+
+    [[ "$commit" =~ ^[0-9a-f]{40}$ ]] \
+        || { print_msg ERROR "$desc 缺少有效的固定 commit"; return 1; }
+    [[ "$destination" == "$BUILD_DIR/"* ]] \
+        || { print_msg ERROR "$desc 目标目录不在安全编译目录内"; return 1; }
+
+    for attempt in 1 2 3; do
+        rm -rf -- "$destination"
+        if git init -q "$destination" \
+            && git -C "$destination" remote add origin "$url" \
+            && git -C "$destination" fetch --quiet --depth=1 --no-tags origin "$commit" \
+            && git -C "$destination" checkout --quiet --detach FETCH_HEAD; then
+            ok=1
+            break
+        fi
+        if [[ "$attempt" -lt 3 ]]; then
+            print_msg WARN "$desc 第 $attempt 次下载失败，稍后重试..."
+            sleep $((attempt * 5))
+        fi
+    done
+    if [[ "$ok" -ne 1 ]]; then
+        print_msg ERROR "$desc 固定提交下载失败"
+        return 1
+    fi
+    actual_commit=$(git -C "$destination" rev-parse HEAD 2>/dev/null || true)
+    if [[ "$actual_commit" != "$commit" ]]; then
+        print_msg ERROR "$desc commit 不匹配（期望 $commit，实际 ${actual_commit:-未知}）"
+        return 1
+    fi
+    print_msg SUCCESS "$desc 固定提交校验通过（${commit:0:12}）🔐"
 }
 
 # =========================
@@ -327,89 +629,59 @@ download_file() {
 # =========================
 download_dependencies() {
     print_step "下载编译依赖模块"
-    mkdir -p "$BUILD_DIR"
+    [[ -n "$BUILD_DIR" && -d "$BUILD_DIR" && ! -L "$BUILD_DIR" ]] \
+        || { print_msg ERROR "临时编译目录无效"; exit 1; }
 
-    # --- ngx_brotli ---
+    # --- ngx_brotli（固定提交及其 submodule commit）---
     if [[ ! -d "$BUILD_DIR/ngx_brotli" ]]; then
-        print_msg INFO "📥 克隆 ngx_brotli..."
-        git clone --depth=1 https://github.com/google/ngx_brotli \
-            "$BUILD_DIR/ngx_brotli" \
-            && git -C "$BUILD_DIR/ngx_brotli" submodule update --init --recursive \
-            || { print_msg ERROR "克隆 ngx_brotli 失败"; exit 1; }
-        print_msg SUCCESS "ngx_brotli 克隆完成 ✅"
+        print_msg INFO "📥 下载固定版本 ngx_brotli..."
+        clone_pinned_repo https://github.com/google/ngx_brotli.git \
+            "$BUILD_DIR/ngx_brotli" "$NGX_BROTLI_COMMIT" "ngx_brotli" \
+            || exit 1
+        git -C "$BUILD_DIR/ngx_brotli" submodule update \
+            --init --recursive --depth=1 \
+            || { print_msg ERROR "ngx_brotli submodule 下载失败"; exit 1; }
+        if git -C "$BUILD_DIR/ngx_brotli" submodule status --recursive \
+            | grep -Eq '^[+-U]'; then
+            print_msg ERROR "ngx_brotli submodule 未处于固定提交"
+            exit 1
+        fi
+        print_msg SUCCESS "ngx_brotli 固定版本准备完成 ✅"
     else
         print_msg INFO "ngx_brotli 已存在，跳过克隆"
     fi
 
-    # --- ngx_http_geoip2_module ---
+    # --- ngx_http_geoip2_module（固定提交）---
     if [[ ! -d "$BUILD_DIR/ngx_http_geoip2_module" ]]; then
-        print_msg INFO "📥 克隆 ngx_http_geoip2_module..."
-        git clone --depth=1 https://github.com/leev/ngx_http_geoip2_module \
-            "$BUILD_DIR/ngx_http_geoip2_module" \
-            || { print_msg ERROR "克隆 ngx_http_geoip2_module 失败"; exit 1; }
-        print_msg SUCCESS "ngx_http_geoip2_module 克隆完成 ✅"
+        print_msg INFO "📥 下载固定版本 ngx_http_geoip2_module..."
+        clone_pinned_repo https://github.com/leev/ngx_http_geoip2_module.git \
+            "$BUILD_DIR/ngx_http_geoip2_module" "$NGX_GEOIP2_COMMIT" \
+            "ngx_http_geoip2_module" || exit 1
+        print_msg SUCCESS "ngx_http_geoip2_module 固定版本准备完成 ✅"
     else
         print_msg INFO "ngx_http_geoip2_module 已存在，跳过克隆"
     fi
 
-    # --- OpenSSL（锁定最新稳定 tag，避免 master HEAD 破坏性 API 变更）---
-    # 背景：OpenSSL 3.x 将 ASN1_INTEGER 改为 opaque type，直接用 HEAD 编译
-    #       nginx OCSP Stapling 代码会报错，必须用正式 release tag。
-    # 修复：原版 git ls-remote 在国内网络经常超时卡住，增加 --timeout 和超时保护。
+    # --- OpenSSL（固定 LTS release commit）---
     if [[ ! -d "$BUILD_DIR/openssl" ]]; then
-        print_msg INFO "🔍 查询 OpenSSL 最新稳定 tag..."
-        local ossl_tag
-        # timeout 保护：15 秒内拿不到结果就用已知稳定版兜底
-        ossl_tag=$(timeout 15 git ls-remote --tags --sort="-v:refname" \
-            https://github.com/openssl/openssl.git \
-            'refs/tags/openssl-3.*' \
-            2>/dev/null \
-            | grep -v '\^{}' \
-            | grep -v -E 'alpha|beta|pre' \
-            | head -1 \
-            | awk '{print $2}' \
-            | sed 's|refs/tags/||') || true
-
-        if [[ -z "$ossl_tag" ]]; then
-            print_msg WARN "⚠️  无法查询 OpenSSL tag（网络超时或受限），回退至已知稳定版 openssl-3.3.2"
-            ossl_tag="openssl-3.3.2"
-        fi
-
-        print_msg INFO "📌 使用 OpenSSL: $ossl_tag"
-        git clone --depth=1 --branch "$ossl_tag" \
-            https://github.com/openssl/openssl.git "$BUILD_DIR/openssl" \
-            || { print_msg ERROR "克隆 OpenSSL 失败（tag: $ossl_tag）"; exit 1; }
-        print_msg SUCCESS "OpenSSL 克隆完成: $ossl_tag ✅"
+        print_msg INFO "📌 使用固定 OpenSSL LTS: $OPENSSL_VERSION"
+        clone_pinned_repo https://github.com/openssl/openssl.git \
+            "$BUILD_DIR/openssl" "$OPENSSL_COMMIT" \
+            "OpenSSL $OPENSSL_VERSION" || exit 1
     else
         print_msg INFO "OpenSSL 已存在，跳过克隆"
     fi
 
-    # --- PCRE2（替代 PCRE，nginx 1.21.5+ 原生支持，JIT 更完善，性能更好）---
+    # --- PCRE2（固定 release 资产及 SHA-256）---
     if [[ ! -d "$BUILD_DIR/pcre2" ]]; then
-        print_msg INFO "🔍 查询 PCRE2 最新稳定版本..."
-        # 从 GitHub releases 获取最新 tag（格式：pcre2-10.xx）
-        local pcre2_tag
-        pcre2_tag=$(timeout 15 git ls-remote --tags --sort="-v:refname" \
-            https://github.com/PCRE2Project/pcre2.git \
-            'refs/tags/pcre2-*' \
-            2>/dev/null \
-            | grep -v '\^{}' \
-            | grep -v -E 'alpha|beta|rc' \
-            | head -1 \
-            | awk '{print $2}' \
-            | sed 's|refs/tags/||') || true
-
-        if [[ -z "$pcre2_tag" ]]; then
-            print_msg WARN "⚠️  无法查询 PCRE2 tag，回退至已知稳定版 pcre2-10.44"
-            pcre2_tag="pcre2-10.44"
-        fi
-
-        local pcre2_ver="${pcre2_tag#pcre2-}"   # 提取纯版本号，如 10.44
+        local pcre2_ver="$PCRE2_VERSION"
+        local pcre2_tag="pcre2-${pcre2_ver}"
         local pcre2_tar="$BUILD_DIR/${pcre2_tag}.tar.gz"
         local pcre2_url="https://github.com/PCRE2Project/pcre2/releases/download/${pcre2_tag}/${pcre2_tag}.tar.gz"
 
         print_msg INFO "📌 使用 PCRE2: $pcre2_tag"
-        download_file "$pcre2_url" "$pcre2_tar" "PCRE2 $pcre2_ver" \
+        download_verified_archive "$pcre2_url" "$pcre2_tar" \
+            "PCRE2 $pcre2_ver" "$PCRE2_SHA256" \
             || { print_msg ERROR "PCRE2 下载失败"; exit 1; }
 
         local top_dir
@@ -424,20 +696,14 @@ download_dependencies() {
         print_msg INFO "PCRE2 已存在，跳过下载"
     fi
 
-    # --- zlib ---
+    # --- zlib（固定 release 资产及 SHA-256）---
     if [[ ! -d "$BUILD_DIR/zlib" ]]; then
-        local zlib_ver="1.3.1"
+        local zlib_ver="$ZLIB_VERSION"
         local zlib_tar="$BUILD_DIR/zlib-${zlib_ver}.tar.gz"
-        local primary_url="https://www.zlib.net/zlib-${zlib_ver}.tar.gz"
-        local fallback_url="https://github.com/madler/zlib/releases/download/v${zlib_ver}/zlib-${zlib_ver}.tar.gz"
+        local zlib_url="https://github.com/madler/zlib/releases/download/v${zlib_ver}/zlib-${zlib_ver}.tar.gz"
 
-        # 主站可达性探测
-        if ! curl -sf --head --max-time 5 "$primary_url" >/dev/null 2>&1; then
-            print_msg WARN "⚠️  zlib 主站不可达，切换至 GitHub 镜像"
-            primary_url="$fallback_url"
-        fi
-
-        download_file "$primary_url" "$zlib_tar" "zlib $zlib_ver" \
+        download_verified_archive "$zlib_url" "$zlib_tar" \
+            "zlib $zlib_ver" "$ZLIB_SHA256" \
             || { print_msg ERROR "zlib 下载失败"; exit 1; }
 
         # 先获取顶层目录名再解压，避免 tar 路径假设（可移植）
@@ -459,17 +725,60 @@ download_dependencies() {
 # =========================
 backup_nginx() {
     print_step "备份现有 Nginx"
-    if [[ ! -x /usr/sbin/nginx ]]; then
-        print_msg INFO "未检测到已安装的 Nginx，跳过备份"
-        return 0
+    local ts
+    ts=$(date +%Y%m%d_%H%M%S)
+
+    if [[ -x /usr/sbin/nginx ]]; then
+        BINARY_WAS_PRESENT=1
+        LAST_BINARY_BACKUP="$BACKUP_DIR/nginx_${ts}.bin"
+        cp -p /usr/sbin/nginx "$LAST_BINARY_BACKUP" \
+            || { print_msg ERROR "现有 Nginx 二进制备份失败，停止升级"; exit 1; }
+        chmod 0600 "$LAST_BINARY_BACKUP" \
+            || { print_msg ERROR "二进制备份权限设置失败"; exit 1; }
+        print_msg INFO "二进制备份: $LAST_BINARY_BACKUP"
+    else
+        print_msg INFO "未检测到已安装的 Nginx，将按首次安装处理"
     fi
-    local ts; ts=$(date +%Y%m%d_%H%M%S)
-    cp /usr/sbin/nginx "$BACKUP_DIR/nginx_${ts}.bin" \
-        && print_msg INFO "二进制备份: $BACKUP_DIR/nginx_${ts}.bin"
+
+    if [[ -f /etc/nginx/nginx.conf ]]; then
+        NGINX_CONF_WAS_PRESENT=1
+        LAST_NGINX_CONF_BACKUP="$BACKUP_DIR/nginx_${ts}.conf"
+        cp -p /etc/nginx/nginx.conf "$LAST_NGINX_CONF_BACKUP" \
+            || { print_msg ERROR "现有 nginx.conf 备份失败，停止升级"; exit 1; }
+        chmod 0600 "$LAST_NGINX_CONF_BACKUP" \
+            || { print_msg ERROR "配置备份权限设置失败"; exit 1; }
+    fi
+
+    SYSTEMD_UNIT_PATH=$(systemctl show -p FragmentPath --value nginx.service 2>/dev/null || true)
+    NGINX_ENABLE_STATE=$(systemctl is-enabled nginx.service 2>/dev/null || true)
+    if [[ -n "$SYSTEMD_UNIT_PATH" ]]; then
+        SYSTEMD_UNIT_WAS_PRESENT=1
+        if [[ -f "$SYSTEMD_UNIT_PATH" ]]; then
+            LAST_SYSTEMD_UNIT_BACKUP="$BACKUP_DIR/nginx_${ts}.service"
+            cp -p "$SYSTEMD_UNIT_PATH" "$LAST_SYSTEMD_UNIT_BACKUP" \
+                || { print_msg ERROR "现有 systemd 单元备份失败，停止升级"; exit 1; }
+            chmod 0600 "$LAST_SYSTEMD_UNIT_BACKUP" \
+                || { print_msg ERROR "systemd 单元备份权限设置失败"; exit 1; }
+        fi
+        print_msg INFO "保留现有 systemd 单元: $SYSTEMD_UNIT_PATH"
+    fi
+
+    if systemctl is-active --quiet nginx 2>/dev/null; then
+        NGINX_WAS_ACTIVE=1
+    fi
+
     if [[ -d /etc/nginx ]]; then
-        tar -czf "$BACKUP_DIR/nginx_${ts}_config.tar.gz" -C /etc nginx \
-            && print_msg INFO "配置备份: $BACKUP_DIR/nginx_${ts}_config.tar.gz"
+        local config_archive="$BACKUP_DIR/nginx_${ts}_config.tar.gz"
+        if (umask 077; tar -czf "$config_archive" -C /etc nginx); then
+            chmod 0600 "$config_archive" \
+                || { print_msg ERROR "配置归档权限设置失败"; exit 1; }
+            print_msg INFO "配置备份: $config_archive"
+        else
+            print_msg ERROR "Nginx 配置归档备份失败，停止升级"
+            exit 1
+        fi
     fi
+    INSTALL_PENDING=1
     print_msg SUCCESS "备份完成 💾"
 }
 
@@ -586,19 +895,14 @@ compile_and_install() {
     make -j"$CPU_CORES" 2>&1 | tee -a "$LOG_FILE" \
         || { print_msg ERROR "编译失败，请查看: $LOG_FILE"; exit 1; }
 
-    # 停止现有服务（先优雅停止，等待连接排空）
-    if systemctl is-active --quiet nginx 2>/dev/null; then
-        print_msg INFO "⏹️  停止现有 Nginx 服务..."
-        systemctl stop nginx
-        # 等待进程完全退出，最多 10 秒
-        local waited=0
-        while pgrep -x nginx >/dev/null 2>&1 && [[ $waited -lt 10 ]]; do
-            sleep 1; ((waited++))
-        done
-        if pgrep -x nginx >/dev/null 2>&1; then
-            print_msg WARN "Nginx 进程未完全退出，强制终止..."
-            pkill -9 -x nginx 2>/dev/null || true
-        fi
+    # 安装前先验证新二进制。升级时无需提前停止旧进程，避免安装失败造成停机。
+    if [[ -f /etc/nginx/nginx.conf ]]; then
+        print_msg INFO "🧪 使用新编译二进制预检现有配置..."
+        "$src_dir/objs/nginx" -t -c /etc/nginx/nginx.conf 2>&1 | tee -a "$LOG_FILE" \
+            || { print_msg ERROR "新二进制无法加载现有配置，已取消安装"; exit 1; }
+    elif ! "$src_dir/objs/nginx" -V >/dev/null 2>&1; then
+        print_msg ERROR "新编译二进制自检失败"
+        exit 1
     fi
 
     make install 2>&1 | tee -a "$LOG_FILE" \
@@ -606,14 +910,76 @@ compile_and_install() {
     print_msg SUCCESS "Nginx $version 安装完成 🎉"
 }
 
+rollback_installation() {
+    [[ "$INSTALL_PENDING" -eq 1 ]] || return 0
+    INSTALL_PENDING=0
+    local failed=0
+    local restore_tmp=""
+
+    print_msg WARN "安装未完成，正在恢复升级前状态..."
+
+    if [[ "$BINARY_WAS_PRESENT" -eq 1 && -f "$LAST_BINARY_BACKUP" ]]; then
+        restore_tmp=$(mktemp /usr/sbin/.nginx.restore.XXXXXX) || failed=1
+        if [[ -n "$restore_tmp" ]]; then
+            cp -p "$LAST_BINARY_BACKUP" "$restore_tmp" \
+                && chmod 0755 "$restore_tmp" \
+                && mv -f "$restore_tmp" /usr/sbin/nginx \
+                || failed=1
+            rm -f "$restore_tmp"
+        fi
+    else
+        rm -f /usr/sbin/nginx || failed=1
+    fi
+
+    if [[ "$NGINX_CONF_WAS_PRESENT" -eq 1 && -f "$LAST_NGINX_CONF_BACKUP" ]]; then
+        install -m 0644 "$LAST_NGINX_CONF_BACKUP" /etc/nginx/nginx.conf || failed=1
+    else
+        rm -f /etc/nginx/nginx.conf || failed=1
+    fi
+
+    if [[ "$SYSTEMD_UNIT_WAS_PRESENT" -eq 0 ]]; then
+        systemctl disable nginx.service >/dev/null 2>&1 || true
+        rm -f /etc/systemd/system/nginx.service || failed=1
+    fi
+
+    systemctl daemon-reload >/dev/null 2>&1 || failed=1
+    case "$NGINX_ENABLE_STATE" in
+        enabled|enabled-runtime)
+            systemctl enable nginx.service >/dev/null 2>&1 || failed=1
+            ;;
+        disabled)
+            systemctl disable nginx.service >/dev/null 2>&1 || failed=1
+            ;;
+        masked|masked-runtime)
+            systemctl mask nginx.service >/dev/null 2>&1 || failed=1
+            ;;
+    esac
+    if [[ "$NGINX_WAS_ACTIVE" -eq 1 ]]; then
+        systemctl restart nginx >/dev/null 2>&1 || failed=1
+    else
+        systemctl stop nginx >/dev/null 2>&1 || true
+    fi
+
+    if [[ "$failed" -eq 0 ]]; then
+        print_msg SUCCESS "升级前状态已恢复"
+        return 0
+    fi
+
+    print_msg ERROR "自动回滚不完整，请使用 $BACKUP_DIR 中的备份手动恢复"
+    return 1
+}
+
 # =========================
 # 🔧 修复旧路径（/var/run → /run）
 # =========================
 fix_existing_paths() {
     if [[ -f /etc/nginx/nginx.conf ]] && grep -q "/var/run/nginx.pid" /etc/nginx/nginx.conf; then
-        local bak="/etc/nginx/nginx.conf.bak.$(date +%Y%m%d_%H%M%S)"
-        cp /etc/nginx/nginx.conf "$bak"
-        sed -i 's|/var/run/nginx.pid|/run/nginx.pid|g' /etc/nginx/nginx.conf
+        local bak
+        bak="/etc/nginx/nginx.conf.bak.$(date +%Y%m%d_%H%M%S)"
+        cp -p /etc/nginx/nginx.conf "$bak" \
+            || { print_msg ERROR "nginx.conf PID 路径修复前备份失败"; exit 1; }
+        sed -i 's|/var/run/nginx.pid|/run/nginx.pid|g' /etc/nginx/nginx.conf \
+            || { cp -p "$bak" /etc/nginx/nginx.conf; print_msg ERROR "nginx.conf PID 路径修复失败"; exit 1; }
         print_msg SUCCESS "🔧 nginx.conf PID 路径已更新（备份: $bak）"
     fi
 }
@@ -627,7 +993,8 @@ create_nginx_config() {
         return 0
     fi
     print_step "创建默认 nginx.conf"
-    cat > /etc/nginx/nginx.conf <<EOF
+    local conf_tmp="$BUILD_DIR/nginx.conf.new"
+    cat > "$conf_tmp" <<EOF
 user ${NGINX_USER};
 worker_processes auto;
 worker_rlimit_nofile 65535;
@@ -669,11 +1036,20 @@ http {
     }
 }
 EOF
-    cat > /usr/share/nginx/html/index.html <<'HTML'
+    install -m 0644 "$conf_tmp" /etc/nginx/nginx.conf \
+        || { print_msg ERROR "默认 nginx.conf 写入失败"; exit 1; }
+    cat > "$BUILD_DIR/index.html.new" <<'HTML'
 <!DOCTYPE html><html><head><title>Welcome to nginx!</title></head>
 <body><h1>Welcome to nginx!</h1><p>Nginx is successfully installed and working.</p></body></html>
 HTML
-    chown -R "$NGINX_USER:$NGINX_GROUP" /usr/share/nginx/html
+    if [[ ! -e /usr/share/nginx/html/index.html ]]; then
+        install -o root -g root -m 0644 "$BUILD_DIR/index.html.new" \
+            /usr/share/nginx/html/index.html \
+            || { print_msg ERROR "默认首页写入失败"; exit 1; }
+    else
+        print_msg INFO "默认首页已存在，保留现有文件"
+    fi
+    validate_default_site_permissions
     print_msg SUCCESS "默认 nginx.conf 创建完成 📝"
 }
 
@@ -682,7 +1058,13 @@ HTML
 # =========================
 create_systemd_service() {
     print_step "配置 systemd 服务"
-    cat > /etc/systemd/system/nginx.service <<'EOF'
+    if [[ "$SYSTEMD_UNIT_WAS_PRESENT" -eq 1 ]]; then
+        print_msg INFO "检测到现有 nginx.service，保留自定义服务定义"
+        return 0
+    fi
+
+    local unit_tmp="$BUILD_DIR/nginx.service.new"
+    cat > "$unit_tmp" <<'EOF'
 [Unit]
 Description=The nginx HTTP and reverse proxy server
 After=syslog.target network-online.target remote-fs.target nss-lookup.target
@@ -702,7 +1084,10 @@ RestartSec=5s
 [Install]
 WantedBy=multi-user.target
 EOF
-    systemctl daemon-reload
+    install -m 0644 "$unit_tmp" /etc/systemd/system/nginx.service \
+        || { print_msg ERROR "systemd 服务文件写入失败"; exit 1; }
+    systemctl daemon-reload \
+        || { print_msg ERROR "systemd daemon-reload 失败"; exit 1; }
     print_msg SUCCESS "systemd 服务文件已写入并重载 ✅"
 }
 
@@ -715,11 +1100,27 @@ verify_installation() {
     print_step "验证安装"
 
     print_msg INFO "🔍 测试 nginx 配置语法..."
-    /usr/sbin/nginx -t 2>&1 | tee -a "$LOG_FILE" \
-        || { print_msg ERROR "Nginx 配置测试失败，请检查配置文件"; exit 1; }
+    if ! /usr/sbin/nginx -t 2>&1 | tee -a "$LOG_FILE"; then
+        print_msg ERROR "Nginx 配置测试失败，请检查配置文件"
+        exit 1
+    fi
 
-    systemctl enable nginx 2>&1 | tee -a "$LOG_FILE"
-    systemctl restart nginx 2>&1 | tee -a "$LOG_FILE"
+    if [[ "$BINARY_WAS_PRESENT" -eq 0 || "$NGINX_ENABLE_STATE" == "enabled" || "$NGINX_ENABLE_STATE" == "enabled-runtime" ]]; then
+        systemctl enable nginx 2>&1 | tee -a "$LOG_FILE" \
+            || print_msg WARN "无法设置 Nginx 开机启动，请稍后手动检查"
+    else
+        print_msg INFO "保留升级前的开机启动状态: ${NGINX_ENABLE_STATE:-unknown}"
+    fi
+
+    if [[ "$BINARY_WAS_PRESENT" -eq 1 && "$NGINX_WAS_ACTIVE" -eq 0 ]]; then
+        print_msg INFO "升级前 Nginx 未运行，已保留停止状态"
+        return 0
+    fi
+
+    if ! systemctl restart nginx 2>&1 | tee -a "$LOG_FILE"; then
+        print_msg ERROR "Nginx 重启失败"
+        exit 1
+    fi
 
     # 轮询等待服务就绪（最多等 15 秒）
     local waited=0
@@ -767,13 +1168,16 @@ show_summary() {
 # =========================
 cleanup() {
     local code=$?
-    if [[ "${DEBUG:-0}" == "1" ]]; then
+    if [[ "$code" -ne 0 && "$INSTALL_PENDING" -eq 1 ]]; then
+        rollback_installation || true
+    fi
+    if [[ "${DEBUG:-0}" == "1" && -n "$BUILD_DIR" ]]; then
         print_msg WARN "🐛 DEBUG 模式：保留临时目录 $BUILD_DIR 供排查"
-    elif [[ -d "$BUILD_DIR" ]]; then
+    elif [[ -n "$BUILD_DIR" && -d "$BUILD_DIR" ]]; then
         print_msg INFO "🧹 清理临时编译目录..."
         rm -rf "$BUILD_DIR"
     fi
-    if [[ $code -ne 0 ]]; then
+    if [[ $code -ne 0 && "$RUN_STARTED" -eq 1 ]]; then
         echo -e "\n${C_RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${C_RESET}"
         print_msg ERROR "安装失败（退出码: $code），诊断建议："
         echo -e "  1️⃣  查看完整日志 : tail -80 $LOG_FILE"
@@ -783,6 +1187,7 @@ cleanup() {
         echo -e "  5️⃣  开启调试模式 : DEBUG=1 $0"
         echo -e "${C_RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${C_RESET}\n"
     fi
+    return 0
 }
 trap cleanup EXIT
 
@@ -790,6 +1195,8 @@ trap cleanup EXIT
 # 🚀 主流程
 # =========================
 main() {
+    parse_args "$@"
+
     echo -e "\n${C_CYAN}╔══════════════════════════════════════════════╗${C_RESET}"
     echo -e "${C_CYAN}║${C_GREEN}   🌉 Nginx 编译安装脚本 v2.1                 ${C_CYAN}║${C_RESET}"
     echo -e "${C_CYAN}║${C_RESET}   By BuBuXSY | License: MIT                  ${C_CYAN}║${C_RESET}"
@@ -798,17 +1205,23 @@ main() {
     preflight
     check_network
     detect_os
-    install_dependencies
+    detect_nginx_identity
 
     # --- 版本选择 ---
-    echo -e "\n${C_YELLOW}📦 请选择安装的 Nginx 版本通道：${C_RESET}"
-    echo    "   1️⃣   最新主线版本（含新功能，适合测试 / 尝鲜）"
-    echo    "   2️⃣   最新稳定版本（推荐生产环境）"
-    read -rp "$(echo -e "${C_CYAN}▶ 请输入 [1/2]（默认 1）：${C_RESET}")" ver_choice
-    ver_choice="${ver_choice:-1}"
-
     local target_version
-    if [[ "$ver_choice" == "2" ]]; then
+    if [[ -z "$VERSION_CHANNEL" ]]; then
+        echo -e "\n${C_YELLOW}📦 请选择安装的 Nginx 版本通道：${C_RESET}"
+        echo    "   1️⃣   最新主线版本（含新功能，适合测试 / 尝鲜）"
+        echo    "   2️⃣   最新稳定版本（推荐生产环境）"
+        read -rp "$(echo -e "${C_CYAN}▶ 请输入 [1/2]（默认 1）：${C_RESET}")" ver_choice || ver_choice=""
+        case "${ver_choice:-1}" in
+            1) VERSION_CHANNEL="mainline" ;;
+            2) VERSION_CHANNEL="stable" ;;
+            *) print_msg ERROR "无效选择，仅支持 1 或 2"; exit 2 ;;
+        esac
+    fi
+
+    if [[ "$VERSION_CHANNEL" == "stable" ]]; then
         target_version=$(get_nginx_version stable)
     else
         target_version=$(get_nginx_version mainline)
@@ -827,14 +1240,23 @@ main() {
 
     if [[ "$installed_version" == "$target_version" ]]; then
         print_msg WARN "⚠️  当前已是最新版本 $target_version"
-        read -rp "$(echo -e "${C_YELLOW}❓ 是否仍要重新编译安装？[y/N]：${C_RESET}")" confirm
-        [[ "${confirm,,}" != "y" ]] && { print_msg INFO "已取消，退出 👋"; exit 0; }
+        if [[ "$ASSUME_YES" -ne 1 ]]; then
+            read -rp "$(echo -e "${C_YELLOW}❓ 是否仍要重新编译安装？[y/N]：${C_RESET}")" confirm || confirm=""
+            [[ "${confirm,,}" != "y" ]] && { print_msg INFO "已取消，退出 👋"; exit 0; }
+        fi
     else
-        read -rp "$(echo -e "${C_YELLOW}❓ 确认安装 ${target_version}？[Y/n]：${C_RESET}")" confirm
-        [[ "${confirm,,}" == "n" ]] && { print_msg INFO "已取消，退出 👋"; exit 0; }
+        if [[ "$ASSUME_YES" -ne 1 ]]; then
+            read -rp "$(echo -e "${C_YELLOW}❓ 确认安装 ${target_version}？[Y/n]：${C_RESET}")" confirm || confirm=""
+            case "${confirm,,}" in
+                ""|y|yes) ;;
+                n|no) print_msg INFO "已取消，退出 👋"; exit 0 ;;
+                *) print_msg ERROR "无效确认输入，请输入 y 或 n"; exit 2 ;;
+            esac
+        fi
     fi
 
     # --- 执行安装流程 ---
+    install_dependencies
     create_nginx_user
     create_directories
     backup_nginx
@@ -843,10 +1265,7 @@ main() {
 
     # 下载 Nginx 源码
     local tar_file="$BUILD_DIR/${target_version}.tar.gz"
-    download_file \
-        "https://nginx.org/download/${target_version}.tar.gz" \
-        "$tar_file" \
-        "Nginx ${target_version} 源码" \
+    download_nginx_source "$target_version" "$tar_file" \
         || { print_msg ERROR "源码下载失败"; exit 1; }
 
     print_msg INFO "📂 解压源码..."
@@ -858,6 +1277,7 @@ main() {
     create_nginx_config
     create_systemd_service
     verify_installation
+    INSTALL_PENDING=0
     show_summary
 }
 

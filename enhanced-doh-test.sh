@@ -25,16 +25,17 @@
 # 🧪 全面型 DoH 测试脚本
 # 功能：测试 DoH 服务可用性、延迟、HTTP 能力和基础网络依赖
 # By: BuBuXSY
-# Version: 2025-07-18
+# Version: 2026-07-11
 # ====================================================
 
+set -u -o pipefail
 
 # 配置变量
 TEST_DOMAIN="www.google.com"
 TIMEOUT=5
-VERBOSE=false
 OUTPUT_FORMAT="table"
 DEBUG=false
+RUN_DIAGNOSIS=false
 
 # 颜色定义
 RED='\033[0;31m'
@@ -44,6 +45,8 @@ BLUE='\033[0;34m'
 PURPLE='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
+
+TABLE_FORMAT="%-30s %-45s %-15s %-10s %-18s %-17s %-12s %s"
 
 # 精选的可靠 DoH 服务器
 DOH_SERVERS=(
@@ -88,6 +91,85 @@ debug_log() {
     fi
 }
 
+now_milliseconds() {
+    local value
+    value=$(date +%s%3N 2>/dev/null || true)
+    if [[ "$value" =~ ^[0-9]+$ ]]; then
+        printf '%s\n' "$value"
+    else
+        printf '%s000\n' "$(date +%s)"
+    fi
+}
+
+json_escape() {
+    local value="$1"
+    value=${value//\\/\\\\}
+    value=${value//\"/\\\"}
+    value=${value//$'\n'/\\n}
+    value=${value//$'\r'/\\r}
+    value=${value//$'\t'/\\t}
+    printf '%s' "$value"
+}
+
+csv_escape() {
+    local value="$1"
+    value=${value//\"/\"\"}
+    printf '"%s"' "$value"
+}
+
+valid_domain() {
+    local domain="${1%.}"
+    local label
+    local labels=()
+
+    [[ -n "$domain" && ${#domain} -le 253 ]] || return 1
+    IFS='.' read -r -a labels <<< "$domain"
+    for label in "${labels[@]}"; do
+        [[ ${#label} -le 63 && "$label" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$ ]] || return 1
+    done
+}
+
+print_result() {
+    local name="$1"
+    local server="$2"
+    local latency="$3"
+    local country="$4"
+    local status="$5"
+    local provider="$6"
+    local method="$7"
+    local features="$8"
+    local color="$9"
+
+    case "$OUTPUT_FORMAT" in
+        table)
+            printf "${color}${TABLE_FORMAT}${NC}\n" \
+                "$name" "$server" "$latency" "$country" "$status" "$provider" "$method" "$features"
+            ;;
+        json)
+            printf '{"name":"%s","server":"%s","latency_ms":%s,"country":"%s","status":"%s","provider":"%s","method":"%s","features":"%s"}' \
+                "$(json_escape "$name")" \
+                "$(json_escape "$server")" \
+                "$([[ "$latency" =~ ^[0-9]+$ ]] && printf '%s' "$latency" || printf 'null')" \
+                "$(json_escape "$country")" \
+                "$(json_escape "$status")" \
+                "$(json_escape "$provider")" \
+                "$(json_escape "$method")" \
+                "$(json_escape "$features")"
+            ;;
+        csv)
+            printf '%s,%s,%s,%s,%s,%s,%s,%s\n' \
+                "$(csv_escape "$name")" \
+                "$(csv_escape "$server")" \
+                "$(csv_escape "$latency")" \
+                "$(csv_escape "$country")" \
+                "$(csv_escape "$status")" \
+                "$(csv_escape "$provider")" \
+                "$(csv_escape "$method")" \
+                "$(csv_escape "$features")"
+            ;;
+    esac
+}
+
 # 多方法测试 DoH 服务器
 test_doh_server() {
     local server=$1
@@ -103,14 +185,16 @@ test_doh_server() {
     
     debug_log "测试服务器: $name ($server)"
     
-    # 方法1: 使用 q 工具
+    # 方法1: 使用 q 工具进行标准 DoH 查询。
     if command -v q &> /dev/null; then
         debug_log "尝试使用 q 工具"
-        local start_time=$(date +%s%3N)
-        result=$(timeout ${TIMEOUT}s q "$TEST_DOMAIN" A -s "$server" --timeout=${TIMEOUT}s 2>/dev/null)
-        local end_time=$(date +%s%3N)
+        local start_time
+        local end_time
+        start_time=$(now_milliseconds)
+        result=$(q -r -s "$server" -t A --timeout="${TIMEOUT}s" "$TEST_DOMAIN" 2>/dev/null || true)
+        end_time=$(now_milliseconds)
         
-        if echo "$result" | grep -q "A.*[0-9]"; then
+        if grep -Eq '([0-9]{1,3}\.){3}[0-9]{1,3}|[0-9a-fA-F]{0,4}:[0-9a-fA-F:]+' <<< "$result"; then
             latency=$((end_time - start_time))
             status="✅ OK"
             method_used="q"
@@ -120,18 +204,23 @@ test_doh_server() {
         fi
     fi
     
-    # 方法2: 如果 q 失败，尝试 curl + dig
-    if [[ "$status" == "❌ Fail" ]] && command -v curl &> /dev/null && command -v dig &> /dev/null; then
-        debug_log "尝试使用 curl + dig"
-        local start_time=$(date +%s%3N)
+    # 方法2: 如果 q 失败，尝试兼容 dns-json 的 DoH 查询。
+    if [[ "$status" == "❌ Fail" ]] && command -v curl &> /dev/null; then
+        debug_log "尝试使用 curl dns-json"
+        local start_time
+        local end_time
+        local doh_result
+        start_time=$(now_milliseconds)
         
-        # 使用 curl 进行 DoH 查询
-        local doh_result=$(curl -s -m "$TIMEOUT" -H "Accept: application/dns-json" \
-            "$server?name=$TEST_DOMAIN&type=A" 2>/dev/null)
+        doh_result=$(curl -fsS --connect-timeout "$TIMEOUT" --max-time "$TIMEOUT" \
+            --get -H "Accept: application/dns-json" \
+            --data-urlencode "name=$TEST_DOMAIN" --data-urlencode "type=A" \
+            "$server" 2>/dev/null || true)
         
-        local end_time=$(date +%s%3N)
+        end_time=$(now_milliseconds)
         
-        if echo "$doh_result" | grep -q '"Answer"' && echo "$doh_result" | grep -q '"data"'; then
+        if grep -Eq '"Status"[[:space:]]*:[[:space:]]*0' <<< "$doh_result" && \
+            grep -q '"Answer"' <<< "$doh_result" && grep -q '"data"' <<< "$doh_result"; then
             latency=$((end_time - start_time))
             status="✅ OK"
             method_used="curl"
@@ -141,70 +230,71 @@ test_doh_server() {
         fi
     fi
     
-    # 方法3: 如果都失败，尝试简单的连通性测试
+    # 方法3: 如果查询失败，区分服务不可用与 HTTP 端点可达。
     if [[ "$status" == "❌ Fail" ]] && command -v curl &> /dev/null; then
         debug_log "尝试连通性测试"
-        local start_time=$(date +%s%3N)
+        local start_time
+        local end_time
+        local http_code
+        start_time=$(now_milliseconds)
         
-        if curl -s -m "$TIMEOUT" -I "$server" | grep -q "200 OK\|400 Bad Request\|405 Method Not Allowed"; then
-            local end_time=$(date +%s%3N)
+        if http_code=$(curl -sS -o /dev/null -w '%{http_code}' \
+            --connect-timeout "$TIMEOUT" --max-time "$TIMEOUT" "$server" 2>/dev/null) && \
+            [[ "$http_code" =~ ^[1-5][0-9][0-9]$ ]]; then
+            end_time=$(now_milliseconds)
             latency=$((end_time - start_time))
             status="🔗 Reachable"
-            method_used="ping"
-            debug_log "连通性测试成功"
+            method_used="HTTP"
+            debug_log "连通性测试成功，HTTP 状态码: $http_code"
         else
             debug_log "连通性测试失败"
         fi
     fi
     
-    # 输出结果
-    if [[ "$OUTPUT_FORMAT" == "table" ]]; then
-        local color=""
-        case "$status" in
-            "✅ OK") color="$GREEN" ;;
-            "🔗 Reachable") color="$YELLOW" ;;
-            *) color="$RED" ;;
-        esac
-        
-		printf "%-30s %-45s %-23s %-20s ${color}%-18s${NC} %-17s %-18s %s\n" \
-  			"$name" "$server" "$latency" "$country" "$status" "$provider" "$method_used" "$features"
-    elif [[ "$OUTPUT_FORMAT" == "json" ]]; then
-        echo "{\"name\":\"$name\",\"server\":\"$server\",\"latency\":\"$latency\",\"country\":\"$country\",\"status\":\"$status\",\"provider\":\"$provider\",\"method\":\"$method_used\",\"features\":\"$features\"}"
-    elif [[ "$OUTPUT_FORMAT" == "csv" ]]; then
-        echo "$name,$server,$latency,$country,$status,$provider,$method_used,$features"
-    fi
+    local color="$RED"
+    case "$status" in
+        "✅ OK") color="$GREEN" ;;
+        "🔗 Reachable") color="$YELLOW" ;;
+    esac
+    print_result "$name" "$server" "$latency" "$country" "$status" "$provider" "$method_used" "$features" "$color"
     
-    # 返回成功状态
-    [[ "$status" == "✅ OK" ]] && return 0 || return 1
+    case "$status" in
+        "✅ OK") return 0 ;;
+        "🔗 Reachable") return 2 ;;
+        *) return 1 ;;
+    esac
 }
 
 # 网络诊断函数
 network_diagnosis() {
     echo -e "${CYAN}===== 网络诊断 =====${NC}"
+    local failures=0
     
     # 检查基本网络连接
     echo -n "检查网络连接... "
-    if ping -c 1 -W 3 8.8.8.8 &> /dev/null; then
+    if command -v ping >/dev/null 2>&1 && ping -c 1 -W 3 8.8.8.8 &> /dev/null; then
         echo -e "${GREEN}✅ 正常${NC}"
     else
         echo -e "${RED}❌ 网络不可达${NC}"
-        return 1
+        failures=$((failures + 1))
     fi
     
     # 检查 DNS 解析
     echo -n "检查 DNS 解析... "
-    if nslookup google.com &> /dev/null; then
+    if command -v nslookup >/dev/null 2>&1 && nslookup google.com &> /dev/null; then
         echo -e "${GREEN}✅ 正常${NC}"
     else
         echo -e "${RED}❌ DNS 解析失败${NC}"
+        failures=$((failures + 1))
     fi
     
     # 检查 HTTPS 连接
     echo -n "检查 HTTPS 连接... "
-    if curl -s -m 3 https://www.google.com &> /dev/null; then
+    if command -v curl >/dev/null 2>&1 && curl -fsS --connect-timeout 3 --max-time 3 https://www.google.com &> /dev/null; then
         echo -e "${GREEN}✅ 正常${NC}"
     else
         echo -e "${RED}❌ HTTPS 连接失败${NC}"
+        failures=$((failures + 1))
     fi
     
     # 检查可用工具
@@ -218,6 +308,7 @@ network_diagnosis() {
     done
     
     echo
+    (( failures == 0 ))
 }
 
 # 显示帮助
@@ -249,14 +340,26 @@ EOF
 while [[ $# -gt 0 ]]; do
     case $1 in
         -d|--domain)
+            if [[ $# -lt 2 || -z "${2:-}" ]]; then
+                echo "参数 $1 缺少域名" >&2
+                exit 2
+            fi
             TEST_DOMAIN="$2"
             shift 2
             ;;
         -t|--timeout)
+            if [[ $# -lt 2 || -z "${2:-}" ]]; then
+                echo "参数 $1 缺少超时秒数" >&2
+                exit 2
+            fi
             TIMEOUT="$2"
             shift 2
             ;;
         -f|--format)
+            if [[ $# -lt 2 || -z "${2:-}" ]]; then
+                echo "参数 $1 缺少输出格式" >&2
+                exit 2
+            fi
             OUTPUT_FORMAT="$2"
             shift 2
             ;;
@@ -265,36 +368,68 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --diagnosis)
-            network_diagnosis
-            exit 0
+            RUN_DIAGNOSIS=true
+            shift
             ;;
         -h|--help)
             show_help
             exit 0
             ;;
         *)
-            echo "未知参数: $1"
-            show_help
-            exit 1
+            echo "未知参数: $1" >&2
+            show_help >&2
+            exit 2
             ;;
     esac
 done
 
+if ! valid_domain "$TEST_DOMAIN"; then
+    echo "无效测试域名: $TEST_DOMAIN" >&2
+    exit 2
+fi
+TEST_DOMAIN="${TEST_DOMAIN%.}"
+
+if [[ ! "$TIMEOUT" =~ ^[1-9][0-9]*$ ]] || (( TIMEOUT > 300 )); then
+    echo "超时时间必须是 1-300 秒的整数: $TIMEOUT" >&2
+    exit 2
+fi
+
+case "$OUTPUT_FORMAT" in
+    table|json|csv) ;;
+    *)
+        echo "无效输出格式: $OUTPUT_FORMAT（支持 table、json、csv）" >&2
+        exit 2
+        ;;
+esac
+
+if [[ "$RUN_DIAGNOSIS" == true ]]; then
+    network_diagnosis
+    exit $?
+fi
+
 # 主程序
 main() {
-    echo -e "${BLUE}===== 全面型 DoH 测试开始 =====${NC}"
-    echo "测试域名: $TEST_DOMAIN"
-    echo "超时时间: ${TIMEOUT}s"
-    echo "输出格式: $OUTPUT_FORMAT"
-    echo
+    local info_fd=1
+    if [[ "$OUTPUT_FORMAT" != "table" ]]; then
+        info_fd=2
+    fi
+
+    echo -e "${BLUE}===== 全面型 DoH 测试开始 =====${NC}" >&$info_fd
+    echo "测试域名: $TEST_DOMAIN" >&$info_fd
+    echo "超时时间: ${TIMEOUT}s" >&$info_fd
+    echo "输出格式: $OUTPUT_FORMAT" >&$info_fd
+    echo >&$info_fd
     
     # 表格头部
     if [[ "$OUTPUT_FORMAT" == "table" ]]; then
-		printf "%-35s %-45s %-25s %-23s %-18s %-18s %-24s %s\n" \
-  			"名称" "服务器" "延迟(ms)" "国家" "状态" "提供商" "方法" "特性"
-		echo "$(printf '%.240s' "$(yes '-' | head -240 | tr -d '\n')")"
+        local separator
+        printf "${TABLE_FORMAT}\n" "名称" "服务器" "延迟(ms)" "国家" "状态" "提供商" "方法" "特性"
+        printf -v separator '%*s' 180 ''
+        echo "${separator// /-}"
     elif [[ "$OUTPUT_FORMAT" == "csv" ]]; then
-        echo "名称,服务器,延迟(ms),国家,状态,提供商,方法,特性"
+        echo '"名称","服务器","延迟(ms)","国家","状态","提供商","方法","特性"'
+    else
+        printf '[\n'
     fi
     
     # 测试所有服务器
@@ -302,48 +437,66 @@ main() {
     local success=0
     local reachable=0
     local failed=0
+    local first_json=true
+    local result_status
     
     for server_info in "${DOH_SERVERS[@]}"; do
         IFS='|' read -r name server country features provider <<< "$server_info"
         
-        if test_doh_server "$server" "$name" "$features" "$provider" "$country"; then
-            ((success++))
-        elif [[ "$?" -eq 2 ]]; then
-            ((reachable++))
+        if [[ "$OUTPUT_FORMAT" == "json" ]]; then
+            if [[ "$first_json" == true ]]; then
+                first_json=false
+            else
+                printf ',\n'
+            fi
+        fi
+
+        test_doh_server "$server" "$name" "$features" "$provider" "$country"
+        result_status=$?
+        if [[ "$result_status" -eq 0 ]]; then
+            success=$((success + 1))
+        elif [[ "$result_status" -eq 2 ]]; then
+            reachable=$((reachable + 1))
         else
-            ((failed++))
+            failed=$((failed + 1))
         fi
     done
+
+
+    if [[ "$OUTPUT_FORMAT" == "json" ]]; then
+        printf '\n]\n'
+    fi
     
     # 统计信息
-    echo
-    echo -e "${BLUE}===== 测试统计 =====${NC}"
-    echo "总计: $total 个服务器"
-    echo -e "${GREEN}完全正常: $success 个${NC}"
-    echo -e "${YELLOW}可达但未测试: $reachable 个${NC}"
-    echo -e "${RED}失败: $failed 个${NC}"
+    echo >&$info_fd
+    echo -e "${BLUE}===== 测试统计 =====${NC}" >&$info_fd
+    echo "总计: $total 个服务器" >&$info_fd
+    echo -e "${GREEN}完全正常: $success 个${NC}" >&$info_fd
+    echo -e "${YELLOW}端点可达但查询失败: $reachable 个${NC}" >&$info_fd
+    echo -e "${RED}失败: $failed 个${NC}" >&$info_fd
     if [[ $total -gt 0 ]]; then
-        echo -e "${YELLOW}成功率: $(( success * 100 / total ))%${NC}"
+        echo -e "${YELLOW}成功率: $(( success * 100 / total ))%${NC}" >&$info_fd
     fi
     
     # 推荐服务器
-    echo
-    echo -e "${PURPLE}===== 推荐使用 =====${NC}"
+    echo >&$info_fd
+    echo -e "${PURPLE}===== 推荐使用 =====${NC}" >&$info_fd
     if [[ $success -gt 0 ]]; then
-        echo -e "${GREEN}✅ 有 $success 个服务器工作正常，可以正常使用${NC}"
-        echo "🌍 国际用户推荐: Cloudflare (1.1.1.1), Google (8.8.8.8)"
-        echo "🇨🇳 国内用户推荐: 阿里DNS, 腾讯DNS"
-        echo "🔒 隐私保护推荐: Mullvad, Digitale Gesellschaft"
-        echo "🛡️ 广告拦截推荐: AdGuard, LibreDNS"
+        echo -e "${GREEN}✅ 有 $success 个服务器工作正常，可以正常使用${NC}" >&$info_fd
+        echo "🌍 国际用户推荐: Cloudflare (1.1.1.1), Google (8.8.8.8)" >&$info_fd
+        echo "🇨🇳 国内用户推荐: 阿里DNS, 腾讯DNS" >&$info_fd
+        echo "🔒 隐私保护推荐: Mullvad, Digitale Gesellschaft" >&$info_fd
+        echo "🛡️ 广告拦截推荐: AdGuard, LibreDNS" >&$info_fd
     else
-        echo -e "${RED}❌ 没有服务器工作正常${NC}"
-        echo "建议:"
-        echo "1. 检查网络连接: $0 --diagnosis"
-        echo "2. 安装 q 工具: go install github.com/natesales/q@latest"
-        echo "3. 使用调试模式: $0 --debug"
+        echo -e "${RED}❌ 没有服务器工作正常${NC}" >&$info_fd
+        echo "建议:" >&$info_fd
+        echo "1. 检查网络连接: $0 --diagnosis" >&$info_fd
+        echo "2. 安装 q 工具: go install github.com/natesales/q@latest" >&$info_fd
+        echo "3. 使用调试模式: $0 --debug" >&$info_fd
     fi
     
-    echo -e "\n${BLUE}===== DoH 测试结束 =====${NC}"
+    echo -e "\n${BLUE}===== DoH 测试结束 =====${NC}" >&$info_fd
+    (( success > 0 ))
 }
 
 # 运行主程序

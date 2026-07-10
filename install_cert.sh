@@ -23,9 +23,9 @@
 # SOFTWARE.
 # ====================================================
 # 🔐 SSL 证书管理工具
-# 支持多CA，DNS API/手动验证，ECC证书，自动部署并重载nginx
+# 支持 Let's Encrypt / ZeroSSL，DNS API/手动验证，ECC证书，自动部署并重载nginx
 # By: BuBuXSY
-# Version: 2025-09-25
+# Version: 2026-07-11
 # ====================================================
 
 set -euo pipefail  # 严格模式
@@ -54,6 +54,28 @@ DNS_METHOD=""
 DNS_PROVIDER=""
 CERT_DIR="/etc/nginx/ssl"
 LOG_FILE=""
+ACME_HOME="/root/.acme.sh"
+ACME_INSTALLER=""
+ACME_INSTALL_LOG=""
+ACME_SOURCE_DIR=""
+ACME_SH_VERSION="${ACME_SH_VERSION:-3.1.3}"
+ACME_SH_SHA256="${ACME_SH_SHA256:-}"
+NGINX_RELOAD_MODE=""
+
+show_help() {
+    cat <<EOF
+SSL 证书自动化管理工具
+
+用法: $0 [--help]
+
+该工具使用交互式流程选择 CA、证书操作、域名和 DNS 验证方式。
+签发、续期和部署证书需要 root 权限。
+默认安装经过 SHA-256 固定的 acme.sh 3.1.3；覆盖 ACME_SH_VERSION 时必须同时提供 ACME_SH_SHA256。
+
+选项:
+  -h, --help    显示帮助信息
+EOF
+}
 
 # 初始化日志文件路径
 init_log_file() {
@@ -69,10 +91,21 @@ init_log_file() {
         fi
     fi
     
-    # 创建日志文件
-    touch "$LOG_FILE" 2>/dev/null || {
-        LOG_FILE="/tmp/acme-cert-tool-$(date +%s).log"
-        touch "$LOG_FILE"
+    if [[ -L "$LOG_FILE" ]]; then
+        echo "❌ 日志路径不能是符号链接: $LOG_FILE" >&2
+        exit 1
+    fi
+
+    # 创建日志文件；回退路径使用 mktemp，避免可预测文件名和符号链接攻击。
+    if ! touch "$LOG_FILE" 2>/dev/null; then
+        LOG_FILE=$(umask 077; mktemp /tmp/acme-cert-tool.XXXXXX.log) || {
+            echo "❌ 无法创建安全日志文件" >&2
+            exit 1
+        }
+    fi
+    chmod 0600 "$LOG_FILE" 2>/dev/null || {
+        echo "❌ 无法设置日志文件权限: $LOG_FILE" >&2
+        exit 1
     }
 }
 
@@ -81,7 +114,8 @@ log() {
     local level="$1"
     shift
     local message="$*"
-    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    local timestamp
+    timestamp=$(date '+%Y-%m-%d %H:%M:%S')
     
     # 写入日志文件
     echo "[$timestamp] [$level] $message" >> "$LOG_FILE" 2>/dev/null || true
@@ -112,22 +146,24 @@ error_exit() {
 
 # 显示欢迎信息
 welcome_message() {
-    clear
+    if [[ -t 1 ]] && command -v clear >/dev/null 2>&1; then
+        clear || true
+    fi
     echo -e "${CYAN}${BOLD}============================================================${RESET}"
     echo -e "${CYAN}${BOLD}          ACME SSL证书自动化管理工具                        ${RESET}"
     echo -e "${CYAN}${BOLD}          支持多CA和自动化部署                              ${RESET}"
     echo -e "${CYAN}${BOLD}============================================================${RESET}"
     echo ""
-    log "INFO" "工具启动，支持 Let's Encrypt, Buypass, ZeroSSL"
+    log "INFO" "工具启动，支持 Let's Encrypt 与 ZeroSSL"
     echo ""
 }
 
 # 检测操作系统
 detect_os() {
     if [[ -f /etc/os-release ]]; then
+        # shellcheck source=/dev/null
         . /etc/os-release
-        OS=$NAME
-        OS_VERSION=$VERSION_ID
+        OS="${NAME:-Linux}"
     elif [[ -f /etc/redhat-release ]]; then
         OS=$(cat /etc/redhat-release | cut -d' ' -f1)
     else
@@ -166,36 +202,35 @@ get_package_manager() {
 
 # 安装依赖
 install_dependencies() {
-    local pkg_manager=$(get_package_manager)
-    local packages=""
+    local pkg_manager
+    pkg_manager=$(get_package_manager)
     
     case $pkg_manager in
         "apt")
             apt-get update -y
-            packages="curl wget dnsutils openssl cron"
-            apt-get install -y $packages
+            apt-get install -y curl dnsutils openssl cron tar coreutils grep gawk
             ;;
         "yum"|"dnf")
-            packages="curl wget bind-utils openssl cronie"
-            $pkg_manager install -y $packages
-            systemctl enable crond
-            systemctl start crond
+            "$pkg_manager" install -y curl bind-utils openssl cronie tar coreutils grep gawk
+            if command -v systemctl >/dev/null 2>&1; then
+                systemctl enable --now crond >/dev/null 2>&1 || log "WARN" "crond 启动失败，请稍后手动检查"
+            fi
             ;;
         "pacman")
-            packages="curl wget bind-tools openssl cronie"
-            pacman -Sy --noconfirm $packages
-            systemctl enable cronie
-            systemctl start cronie
+            pacman -Sy --noconfirm curl bind-tools openssl cronie tar coreutils grep gawk
+            if command -v systemctl >/dev/null 2>&1; then
+                systemctl enable --now cronie >/dev/null 2>&1 || log "WARN" "cronie 启动失败，请稍后手动检查"
+            fi
             ;;
         *)
-            log "WARN" "未知的包管理器，请手动安装: curl, wget, dig, openssl"
+            return 1
             ;;
     esac
 }
 
 # 检查系统依赖
 check_dependencies() {
-    local deps=("curl" "wget" "openssl")
+    local deps=("curl" "openssl" "tar" "sha256sum" "mktemp" "awk" "grep")
     local missing=()
     
     # 检查dig命令（不同系统命令名可能不同）
@@ -217,8 +252,15 @@ check_dependencies() {
         
         if [[ "$install_deps" =~ ^[Yy]$ ]]; then
             log "INFO" "正在安装依赖包..."
-            install_dependencies
-            log "SUCCESS" "依赖安装完成"
+            install_dependencies || error_exit "依赖自动安装失败，请手动安装: curl, dig/nslookup, openssl, tar, coreutils, grep, awk"
+            local dep
+            for dep in curl openssl tar sha256sum mktemp awk grep; do
+                command -v "$dep" >/dev/null 2>&1 || error_exit "依赖安装后仍缺少命令: $dep"
+            done
+            if ! command -v dig >/dev/null 2>&1 && ! command -v nslookup >/dev/null 2>&1; then
+                error_exit "依赖安装后仍缺少 DNS 查询命令（dig/nslookup）"
+            fi
+            log "SUCCESS" "依赖安装完成并通过复检"
         else
             error_exit "缺少必要依赖，无法继续"
         fi
@@ -235,10 +277,10 @@ show_progress() {
     local i=0
     
     echo -n "$message "
-    while kill -0 $pid 2>/dev/null; do
+    while kill -0 "$pid" 2>/dev/null; do
         printf "\r$message ${LOADING} %c" "${chars:$((i%4)):1}"
         sleep 0.2
-        ((i++))
+        i=$((i + 1))
     done
     echo -e "\r$message ${SUCCESS}"
 }
@@ -247,12 +289,11 @@ show_progress() {
 select_ca() {
     echo -e "${GREEN}${BOLD}请选择 CA 供应商：${RESET}"
     echo -e "  ${BLUE}1)${RESET} Let's Encrypt (免费，推荐)"
-    echo -e "  ${BLUE}2)${RESET} Buypass (免费，90天)"
-    echo -e "  ${BLUE}3)${RESET} ZeroSSL (免费，90天)"
+    echo -e "  ${BLUE}2)${RESET} ZeroSSL (免费，90天)"
     echo ""
     
     while true; do
-        echo -n "请选择 [1-3] (默认: 1): "
+        echo -n "请选择 [1-2] (默认: 1): "
         read -r ca_choice
         ca_choice=${ca_choice:-1}
         
@@ -263,12 +304,15 @@ select_ca() {
                 break
                 ;;
             2)
-                CA_URL="https://api.buypass.com/acme/directory"
-                log "SUCCESS" "选择了 Buypass 作为 CA"
-                break
-                ;;
-            3)
                 CA_URL="https://acme.zerossl.com/v2/DV90"
+                while [[ -z "${ACME_EMAIL:-}" || ! "$ACME_EMAIL" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]]; do
+                    echo -n "ZeroSSL 需要账户邮箱，请输入 ACME_EMAIL: "
+                    read -r ACME_EMAIL
+                    if [[ ! "$ACME_EMAIL" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]]; then
+                        log "WARN" "邮箱格式无效，请重新输入"
+                    fi
+                done
+                export ACME_EMAIL
                 log "SUCCESS" "选择了 ZeroSSL 作为 CA"
                 break
                 ;;
@@ -520,8 +564,8 @@ setup_custom_dns_api() {
     echo -n "请输入 DNS API 名称 (例如: dns_gd): "
     read -r custom_dns
     
-    if [[ -z "$custom_dns" ]]; then
-        error_exit "DNS API 名称不能为空"
+    if [[ ! "$custom_dns" =~ ^dns_[A-Za-z0-9_]+$ ]]; then
+        error_exit "DNS API 名称格式无效，应类似 dns_gd"
     fi
     
     DNS_PROVIDER="$custom_dns"
@@ -565,8 +609,7 @@ select_operation() {
                 ;;
             4)
                 list_certificates
-                select_operation
-                return
+                echo ""
                 ;;
             *)
                 log "WARN" "无效选择，请重新输入"
@@ -661,18 +704,75 @@ install_acme() {
     
     log "INFO" "开始安装 acme.sh..."
     
-    # 下载并安装 acme.sh
-    {
-        cd /tmp
-        curl https://get.acme.sh | sh -s email=admin@example.com
-    } > /dev/null 2>&1 &
-    
-    show_progress $! "正在安装 acme.sh"
-    wait
+    if [[ ! "$ACME_SH_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        error_exit "ACME_SH_VERSION 格式无效: $ACME_SH_VERSION"
+    fi
+    if [[ -z "$ACME_SH_SHA256" ]]; then
+        if [[ "$ACME_SH_VERSION" == "3.1.3" ]]; then
+            ACME_SH_SHA256="efd12b265252f8875269960b6b31830731ccce2b3e6ff8e7ecfbee21fde35ab4"
+        else
+            error_exit "覆盖 ACME_SH_VERSION 时必须同时提供 ACME_SH_SHA256"
+        fi
+    fi
+    ACME_SH_SHA256="${ACME_SH_SHA256,,}"
+    [[ "$ACME_SH_SHA256" =~ ^[0-9a-f]{64}$ ]] \
+        || error_exit "ACME_SH_SHA256 必须是 64 位十六进制摘要"
+
+    ACME_INSTALLER=$(mktemp /tmp/acme-sh.XXXXXX.tar.gz) \
+        || error_exit "无法创建临时归档文件"
+    ACME_INSTALL_LOG=$(mktemp /tmp/acme-installer-log.XXXXXX) \
+        || error_exit "无法创建临时日志文件"
+    ACME_SOURCE_DIR=$(mktemp -d /tmp/acme-source.XXXXXX) \
+        || error_exit "无法创建临时源码目录"
+
+    if ! curl -fsSL --retry 3 --connect-timeout 10 --max-time 60 \
+        "https://codeload.github.com/acmesh-official/acme.sh/tar.gz/refs/tags/${ACME_SH_VERSION}" \
+        -o "$ACME_INSTALLER"; then
+        error_exit "acme.sh ${ACME_SH_VERSION} 源码归档下载失败"
+    fi
+    local actual_sha256
+    actual_sha256=$(sha256sum "$ACME_INSTALLER" | awk '{print tolower($1)}')
+    [[ "$actual_sha256" == "$ACME_SH_SHA256" ]] \
+        || error_exit "acme.sh 归档 SHA-256 不匹配，已拒绝执行"
+
+    local archive_list
+    archive_list=$(tar -tzf "$ACME_INSTALLER" 2>/dev/null) \
+        || error_exit "acme.sh 源码归档损坏"
+    if grep -Eq '(^/|(^|/)\.\.(/|$))' <<< "$archive_list"; then
+        error_exit "acme.sh 源码归档包含不安全路径"
+    fi
+    if grep -Ev "^acme\.sh-${ACME_SH_VERSION}(/|$)" <<< "$archive_list" | grep -q .; then
+        error_exit "acme.sh 源码归档目录结构异常"
+    fi
+    tar -xzf "$ACME_INSTALLER" -C "$ACME_SOURCE_DIR" \
+        || error_exit "acme.sh 源码归档解压失败"
+
+    local acme_source="$ACME_SOURCE_DIR/acme.sh-${ACME_SH_VERSION}/acme.sh"
+    [[ -f "$acme_source" ]] || error_exit "acme.sh 主脚本不存在"
+    grep -Fxq "VER=${ACME_SH_VERSION}" "$acme_source" \
+        || error_exit "acme.sh 主脚本版本与归档标签不一致"
+    grep -Fq 'PROJECT="https://github.com/acmesh-official/$PROJECT_NAME"' "$acme_source" \
+        || error_exit "acme.sh 主脚本来源标识异常"
+
+    local install_pid
+    local install_args=(--install --home "$ACME_HOME")
+    if [[ -n "${ACME_EMAIL:-}" ]]; then
+        install_args+=(--email "$ACME_EMAIL")
+        sh "$acme_source" "${install_args[@]}" >"$ACME_INSTALL_LOG" 2>&1 &
+    else
+        log "WARN" "未设置 ACME_EMAIL，将使用 acme.sh 默认账户注册流程"
+        sh "$acme_source" "${install_args[@]}" >"$ACME_INSTALL_LOG" 2>&1 &
+    fi
+    install_pid=$!
+    show_progress "$install_pid" "正在安装 acme.sh"
+    if ! wait "$install_pid"; then
+        tail -n 20 "$ACME_INSTALL_LOG" >&2 || true
+        error_exit "acme.sh 安装失败"
+    fi
     
     # 创建软链接
-    if [[ -f "$HOME/.acme.sh/acme.sh" ]]; then
-        ln -sf "$HOME/.acme.sh/acme.sh" /usr/local/bin/acme.sh
+    if [[ -f "$ACME_HOME/acme.sh" ]]; then
+        ln -sf "$ACME_HOME/acme.sh" /usr/local/bin/acme.sh
         # 添加到PATH
         if ! echo "$PATH" | grep -q "/usr/local/bin"; then
             export PATH="/usr/local/bin:$PATH"
@@ -686,6 +786,13 @@ install_acme() {
 # 设置 CA
 set_ca() {
     log "INFO" "设置 CA 为: $CA_URL"
+    local directory_json
+    if ! directory_json=$(curl -fsSL --retry 2 --connect-timeout 8 --max-time 20 "$CA_URL") \
+        || ! grep -q '"newNonce"' <<< "$directory_json" \
+        || ! grep -q '"newAccount"' <<< "$directory_json" \
+        || ! grep -q '"newOrder"' <<< "$directory_json"; then
+        error_exit "所选 CA 的 ACME Directory 不可用或响应格式异常: $CA_URL"
+    fi
     if ! acme.sh --set-default-ca --server "$CA_URL" >/dev/null 2>&1; then
         error_exit "设置 CA 失败"
     fi
@@ -752,22 +859,29 @@ issue_certificate() {
             error_exit "证书申请失败（DNS API 验证）"
         fi
     else
-        # 手动 DNS 验证 - 修复：一步完成，交互式操作
+        # 手动 DNS 验证需要先生成 TXT，再在记录生效后执行 renew 完成签发。
         log "INFO" "使用手动 DNS 验证方式"
-        log "INFO" "这将是一个交互式过程，请按 acme.sh 提示添加DNS记录"
+        log "INFO" "第一步将显示需要添加的 DNS TXT 记录"
         
         echo ""
         echo -e "${YELLOW}${BOLD}注意：接下来 acme.sh 会显示需要添加的DNS记录信息${RESET}"
         echo -e "${YELLOW}请在DNS控制台添加显示的TXT记录，然后按提示继续${RESET}"
         echo ""
-        echo -n "按 [Enter] 开始申请证书..."
+        echo -n "按 [Enter] 生成 DNS 验证记录..."
         read -r
-        
-        # 修复：使用一步完成的手动DNS验证
-        if acme.sh --issue --dns -d "$DOMAIN" --keylength ec-256 --yes-I-know-dns-manual-mode-enough-go-ahead-please; then
+
+        acme.sh --issue --dns -d "$DOMAIN" --keylength ec-256 \
+            --yes-I-know-dns-manual-mode-enough-go-ahead-please || true
+
+        echo ""
+        echo -e "${YELLOW}请添加上方 TXT 记录并等待 DNS 生效。${RESET}"
+        echo -n "记录生效后按 [Enter] 继续签发..."
+        read -r
+        if acme.sh --renew --ecc -d "$DOMAIN" \
+            --yes-I-know-dns-manual-mode-enough-go-ahead-please; then
             log "SUCCESS" "证书申请成功（手动 DNS 验证）"
         else
-            error_exit "证书申请失败（手动 DNS 验证）"
+            error_exit "证书申请失败，请确认 TXT 记录已生效"
         fi
     fi
 }
@@ -777,11 +891,14 @@ renew_certificate() {
     log "INFO" "开始续期证书: $DOMAIN"
     
     local renewal_output
-    renewal_output=$(acme.sh --renew --ecc -d "$DOMAIN" 2>&1 || true)
-    
-    if echo "$renewal_output" | grep -q "Skip"; then
+    if renewal_output=$(acme.sh --renew --ecc -d "$DOMAIN" 2>&1); then
+        if ! echo "$renewal_output" | grep -qi "skip"; then
+            log "SUCCESS" "证书续期成功"
+            return 0
+        fi
+
         log "INFO" "证书尚未到续期时间"
-        echo "$renewal_output" | grep -E "(Skip|Next renewal)"
+        echo "$renewal_output" | grep -Ei "(skip|next renewal)" || true
         
         echo -n "是否强制续期？[y/N]: "
         read -r force_choice
@@ -790,15 +907,13 @@ renew_certificate() {
         else
             log "INFO" "续期操作已跳过"
         fi
-    elif echo "$renewal_output" | grep -q "Success"; then
-        log "SUCCESS" "证书续期成功"
     else
         # 检查是否需要手动DNS验证
         if echo "$renewal_output" | grep -q "dns manual mode" || [[ "$DOMAIN" == \*.* ]]; then
             log "INFO" "需要手动DNS验证进行续期"
             
             # 检查证书配置
-            local cert_conf="$HOME/.acme.sh/${DOMAIN}_ecc/${DOMAIN}.conf"
+            local cert_conf="$ACME_HOME/${DOMAIN}_ecc/${DOMAIN}.conf"
             if [[ -f "$cert_conf" ]] && grep -q "Le_Webroot='dns'" "$cert_conf" 2>/dev/null; then
                 log "INFO" "使用手动DNS验证续期"
                 echo ""
@@ -825,7 +940,7 @@ force_renew_certificate() {
     log "INFO" "强制更新证书: $DOMAIN"
     
     # 检查证书配置文件，确定验证方式
-    local cert_conf="$HOME/.acme.sh/${DOMAIN}_ecc/${DOMAIN}.conf"
+    local cert_conf="$ACME_HOME/${DOMAIN}_ecc/${DOMAIN}.conf"
     local dns_api_provider=""
     
     if [[ -f "$cert_conf" ]]; then
@@ -885,17 +1000,28 @@ create_cert_directory() {
 
 # 检查nginx状态
 check_nginx() {
+    NGINX_RELOAD_MODE=""
     if ! command -v nginx >/dev/null 2>&1; then
         log "WARN" "未检测到 Nginx，证书将安装但不会重载服务"
         return 1
     fi
-    
-    if ! systemctl is-active --quiet nginx; then
-        log "WARN" "Nginx 服务未运行"
+
+    if command -v systemctl >/dev/null 2>&1 \
+        && systemctl is-active --quiet nginx >/dev/null 2>&1; then
+        NGINX_RELOAD_MODE="systemd"
+        return 0
+    fi
+
+    if command -v pgrep >/dev/null 2>&1 && pgrep -x nginx >/dev/null 2>&1; then
+        NGINX_RELOAD_MODE="signal"
+        if command -v systemctl >/dev/null 2>&1; then
+            log "WARN" "nginx.service 未运行，但检测到 Nginx 进程，将使用 nginx -s reload"
+        fi
+        return 0
+    else
+        log "WARN" "Nginx 进程未运行"
         return 1
     fi
-    
-    return 0
 }
 
 # 安装证书到 Nginx
@@ -906,15 +1032,22 @@ install_certificate() {
     
     local reload_cmd=""
     if check_nginx; then
-        reload_cmd="nginx -t && systemctl reload nginx"
+        case "$NGINX_RELOAD_MODE" in
+            systemd) reload_cmd="nginx -t && (systemctl reload nginx || nginx -s reload)" ;;
+            signal)  reload_cmd="nginx -t && nginx -s reload" ;;
+        esac
     fi
-    
+
+    local install_args=(
+        --install-cert -d "$DOMAIN" --ecc
+        --cert-file "$CERT_DIR/${DOMAIN}.cert.pem"
+        --key-file "$CERT_DIR/${DOMAIN}.key.pem"
+        --fullchain-file "$CERT_DIR/${DOMAIN}.fullchain.pem"
+    )
+    [[ -n "$reload_cmd" ]] && install_args+=(--reloadcmd "$reload_cmd")
+
     # 安装证书
-    if acme.sh --install-cert -d "$DOMAIN" --ecc \
-        --cert-file "$CERT_DIR/${DOMAIN}.cert.pem" \
-        --key-file "$CERT_DIR/${DOMAIN}.key.pem" \
-        --fullchain-file "$CERT_DIR/${DOMAIN}.fullchain.pem" \
-        --reloadcmd "$reload_cmd" >/dev/null 2>&1; then
+    if acme.sh "${install_args[@]}" >/dev/null 2>&1; then
         
         log "SUCCESS" "证书安装成功"
         log "INFO" "证书文件位置:"
@@ -929,16 +1062,20 @@ install_certificate() {
 # 设置自动续期
 setup_auto_renewal() {
     log "INFO" "设置自动续期..."
-    
+
+    command -v crontab >/dev/null 2>&1 || error_exit "未找到 crontab，无法设置自动续期"
+    local existing_crontab
+    existing_crontab=$(crontab -l 2>/dev/null || true)
+
     # 检查是否已有crontab任务
-    if crontab -l 2>/dev/null | grep -q "acme.sh"; then
+    if grep -Fq "acme.sh" <<< "$existing_crontab"; then
         log "INFO" "自动续期已设置"
         return 0
     fi
-    
+
     # 添加 crontab任务
-    local cron_job="0 2 * * * /usr/local/bin/acme.sh --cron --home /root/.acme.sh >/dev/null 2>&1"
-    (crontab -l 2>/dev/null; echo "$cron_job") | crontab -
+    local cron_job="0 2 * * * /usr/local/bin/acme.sh --cron --home $ACME_HOME >/dev/null 2>&1"
+    { [[ -z "$existing_crontab" ]] || printf '%s\n' "$existing_crontab"; printf '%s\n' "$cron_job"; } | crontab -
     
     log "SUCCESS" "自动续期设置完成 (每天凌晨2点检查)"
 }
@@ -959,7 +1096,11 @@ show_certificate_info() {
         expiry_date=$(openssl x509 -in "$CERT_DIR/${DOMAIN}.fullchain.pem" -noout -enddate 2>/dev/null | cut -d= -f2)
         if [[ -n "$expiry_date" ]]; then
             local expiry_timestamp current_timestamp days_remaining
-            expiry_timestamp=$(date -d "$expiry_date" +%s 2>/dev/null || echo "0")
+            expiry_timestamp=$(date -d "$expiry_date" +%s 2>/dev/null || true)
+            if [[ ! "$expiry_timestamp" =~ ^[0-9]+$ ]] || [[ "$expiry_timestamp" -eq 0 ]]; then
+                log "WARN" "无法解析证书过期时间: $expiry_date"
+                return
+            fi
             current_timestamp=$(date +%s)
             days_remaining=$(( (expiry_timestamp - current_timestamp) / 86400 ))
             
@@ -978,7 +1119,9 @@ show_certificate_info() {
 show_nginx_config_example() {
     echo ""
     echo -e "${YELLOW}${BOLD}Nginx 配置示例：${RESET}"
-    echo -e "${CYAN}server {
+    printf '%b' "$CYAN"
+    cat <<EOF
+server {
     listen 443 ssl http2;
     server_name $DOMAIN;
     
@@ -1007,16 +1150,32 @@ server {
     listen 80;
     server_name $DOMAIN;
     return 301 https://\$server_name\$request_uri;
-}${RESET}"
+}
+EOF
+    printf '%b\n' "$RESET"
 }
 
 # 主函数
 main() {
+    if [[ $# -gt 0 ]]; then
+        case "$1" in
+            -h|--help)
+                show_help
+                exit 0
+                ;;
+            *)
+                echo -e "${RED}${ERROR} 未知参数: $1${RESET}" >&2
+                show_help >&2
+                exit 2
+                ;;
+        esac
+    fi
+
     # 初始化
     init_log_file
     welcome_message
-    detect_os
     check_root
+    detect_os
     check_dependencies
     
     # 用户交互
@@ -1053,18 +1212,30 @@ main() {
     log "INFO" "日志文件: $LOG_FILE"
     
     echo ""
-    if [[ "$DNS_METHOD" == "api" ]]; then
-        log "INFO" "已使用 DNS API 验证方式，后续续期将自动进行"
-        log "INFO" "DNS API 提供商: $DNS_PROVIDER"
+    if [[ "$OPERATION" == "issue" ]]; then
+        if [[ "$DNS_METHOD" == "api" ]]; then
+            log "INFO" "已使用 DNS API 验证方式，后续续期将自动进行"
+            log "INFO" "DNS API 提供商: $DNS_PROVIDER"
+        else
+            log "INFO" "已使用手动 DNS 验证方式"
+            log "INFO" "如需自动化续期，建议配置 DNS API"
+        fi
     else
-        log "INFO" "已使用手动 DNS 验证方式"
-        log "INFO" "如需自动化续期，建议配置 DNS API"
+        log "INFO" "现有证书操作完成: $DOMAIN"
     fi
     
     echo -e "${GREEN}感谢使用 SSL 证书自动化管理工具！${RESET}"
 }
 
 # 信号处理
+cleanup() {
+    [[ -n "$ACME_INSTALLER" ]] && rm -f "$ACME_INSTALLER"
+    [[ -n "$ACME_INSTALL_LOG" ]] && rm -f "$ACME_INSTALL_LOG"
+    [[ -n "$ACME_SOURCE_DIR" ]] && rm -rf "$ACME_SOURCE_DIR"
+    return 0
+}
+
+trap cleanup EXIT
 trap 'error_exit "脚本被中断"' INT TERM
 
 # 执行主函数

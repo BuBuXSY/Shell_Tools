@@ -1,7 +1,8 @@
 // ==UserScript==
 // @name              ✨ Mactype助手增强版 (Edge优化)
-// @version           1.0.0
-// @date              2025-07-19
+// @namespace         https://github.com/BuBuXSY/Shell_Tools
+// @version           1.1.0
+// @date              2026-07-11
 // @description       🎨 专为Microsoft Edge优化的Windows字体渲染增强工具，支持多种渲染方式、自定义字体、预设方案等高级功能
 // @author            BuBuXSY
 // @license           MIT
@@ -18,7 +19,6 @@
 // @grant             GM_setValue
 // @grant             GM_registerMenuCommand
 // @grant             GM_getResourceText
-// @grant             GM_info
 // @icon              data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMjggMTI4Ij48cGF0aCBkPSJNMTIwIDcuMWM0LjQgMCA4IDQuMSA4IDl2NzMuMmMwIDUtMy42IDktOCA5SDgwLjhsNy4yIDE2LjNjLjggMi4zIDAgNS0xLjYgNS45LS40LjUtMS4yLjUtMS42LjVINDMuNmMtMi40IDAtNC0xLjgtNC00LjUgMC0uOSAwLTEuNC40LTEuOGw3LjItMTYuM0g4Yy00LjQgMC04LTQuMS04LTlWMTYuMWMwLTUgMy42LTkgOC05aDExMnoiIGZpbGw9IiM0NDQiLz48cGF0aCBkPSJNMTAyLjMgMzQuN2ExNC4yOCAxNC4yOCAwIDAgMC02LjItNi4yYy0yLjctMS40LTUuMy0yLjItMTIuNi0yLjJINjkuMXY1NC42aDE0LjRjNy4zIDAgOS45LS44IDEyLjYtMi4yYTE1LjQyIDE1LjQyIDAgMCAwIDYuMi02LjJjMS40LTIuNyAyLjItNS4zIDIuMi0xMi42VjQ3LjNjMC03LjMtLjgtOS45LTIuMi0xMi42em0tOC43IDI4LjJjMCAyLjQtLjIgMy4zLS43IDQuMnMtMS4yIDEuNi0yLjEgMi4xYy0uOS40LTEuOC43LTQuMi43SDgwVjM3LjJoNi42YzIuNCAwIDMuMy4yIDQuMi43czEuNiAxLjIgMi4xIDIuMWMuNC45LjcgMS44LjcgNC4ydjE4Ljd6TTUwIDQ4LjFIMzYuM1YyNi4zSDI1LjR2NTQuNWgxMC45VjU5SDUwdjIxLjhoMTAuOVYyNi4zSDUwdjIxLjh6IiBmaWxsPSIjZmZmIi8+PC9zdmc+
 // ==/UserScript==
 
@@ -90,7 +90,7 @@
         }
     };
 
-    let util = {
+    const util = {
         getValue(name, defaultValue) {
             const value = GM_getValue(name);
             return value !== undefined ? value : defaultValue;
@@ -102,24 +102,31 @@
 
         addStyle(id, tag, css) {
             tag = tag || 'style';
-            let doc = document, styleDom = doc.getElementById(id);
-            if (styleDom) styleDom.innerHTML = css;
-            else {
-                let style = doc.createElement(tag);
-                style.rel = 'stylesheet';
-                style.id = id;
-                tag === 'style' ? style.innerHTML = css : style.href = css;
-                document.head.appendChild(style);
-            }
-        },
+            const doc = document;
+            const styleDom = doc.getElementById(id);
 
-        removeElementById(eleId) {
-            let ele = document.getElementById(eleId);
-            ele && ele.parentNode.removeChild(ele);
+            if (styleDom) {
+                if (tag === 'style') styleDom.textContent = css;
+                else styleDom.href = css;
+                return true;
+            }
+
+            if (!doc.head) return false;
+
+            const style = doc.createElement(tag);
+            if (tag === 'style') {
+                style.textContent = css;
+            } else {
+                style.rel = 'stylesheet';
+                style.href = css;
+            }
+            style.id = id;
+            doc.head.appendChild(style);
+            return true;
         }
     };
 
-    let main = {
+    const main = {
         config: {
             currentPreset: 'balanced',
             currentStroke: 0.3,
@@ -141,7 +148,7 @@
          */
         initValue() {
             const savedConfig = util.getValue('enhanced_config', null);
-            if (savedConfig) {
+            if (savedConfig && typeof savedConfig === 'object' && !Array.isArray(savedConfig)) {
                 this.config = {...this.config, ...savedConfig};
             } else {
                 util.setValue('enhanced_config', this.config);
@@ -154,6 +161,40 @@
                 this.config.currentPreset = 'custom';
                 this.saveConfig();
             }
+
+            this.normalizeConfig();
+        },
+
+        normalizeConfig() {
+            const clamp = (value, min, max, fallback) => {
+                const parsed = Number(value);
+                return Number.isFinite(parsed) ? Math.min(max, Math.max(min, parsed)) : fallback;
+            };
+
+            if (!Object.prototype.hasOwnProperty.call(PRESETS, this.config.currentPreset)) {
+                this.config.currentPreset = EDGE_CONFIG.isEdge ? 'edge' : 'balanced';
+            }
+            this.config.currentStroke = clamp(this.config.currentStroke, 0, 1, 0.3);
+            this.config.letterSpacing = clamp(this.config.letterSpacing, -0.05, 0.1, 0.02);
+            this.config.lineHeight = clamp(this.config.lineHeight, 1.2, 2, 1.6);
+            this.config.whiteList = Array.isArray(this.config.whiteList)
+                ? [...new Set(this.config.whiteList.filter(host => typeof host === 'string' && host))]
+                : [];
+            this.config.blackList = Array.isArray(this.config.blackList)
+                ? [...new Set(this.config.blackList.filter(host => typeof host === 'string' && host))]
+                : [];
+
+            ['enableFontReplace', 'enableShadow', 'enableSmooth', 'enableLetterSpacing', 'customFonts']
+                .forEach(key => {
+                    this.config[key] = Boolean(this.config[key]);
+                });
+
+            if (typeof this.config.currentShadow !== 'string') {
+                this.config.currentShadow = PRESETS.balanced.shadow;
+            }
+            if (!['antialiased', 'subpixel-antialiased', 'auto'].includes(this.config.currentSmooth)) {
+                this.config.currentSmooth = 'antialiased';
+            }
         },
 
         saveConfig() {
@@ -161,7 +202,16 @@
         },
 
         showSetting() {
-            const currentPreset = PRESETS[this.config.currentPreset];
+            if (typeof Swal === 'undefined') {
+                window.alert('设置组件加载失败，请检查网络后刷新页面。');
+                return;
+            }
+
+            const originalConfig = {
+                ...this.config,
+                whiteList: [...this.config.whiteList],
+                blackList: [...this.config.blackList]
+            };
             const browserInfo = EDGE_CONFIG.isEdge ?
                 `<div style="text-align: center; color: #0078d4; margin-bottom: 10px;">
                     🌐 Microsoft Edge ${EDGE_CONFIG.edgeVersion} |
@@ -276,6 +326,7 @@
                 if (res.isConfirmed) {
                     this.saveConfig();
                     this.applyStyle();
+                    return;
                 }
                 if (res.isDismissed && res.dismiss === "cancel") {
                     this.config = {
@@ -295,7 +346,11 @@
                     };
                     this.saveConfig();
                     this.applyStyle();
+                    return;
                 }
+
+                this.config = originalConfig;
+                this.applyStyle();
             });
         },
 
@@ -303,10 +358,11 @@
             // 预设按钮
             document.querySelectorAll('.preset-btn').forEach(btn => {
                 btn.addEventListener('click', (e) => {
-                    const preset = e.target.dataset.preset;
+                    const target = e.currentTarget;
+                    const preset = target.dataset.preset;
                     this.applyPreset(preset);
                     document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
-                    e.target.classList.add('active');
+                    target.classList.add('active');
                 });
             });
 
@@ -370,7 +426,7 @@
             });
         },
 
-        applyPreset(presetName) {
+        applyPreset(presetName, applyImmediately = true) {
             const preset = PRESETS[presetName];
             if (preset) {
                 this.config.currentPreset = presetName;
@@ -379,10 +435,12 @@
                 this.config.currentSmooth = preset.smooth;
 
                 // 更新UI
-                document.getElementById('stroke-range').value = preset.stroke;
-                document.getElementById('stroke-value').textContent = preset.stroke;
+                const strokeRange = document.getElementById('stroke-range');
+                const strokeValue = document.getElementById('stroke-value');
+                if (strokeRange) strokeRange.value = preset.stroke;
+                if (strokeValue) strokeValue.textContent = preset.stroke;
 
-                this.applyStyle();
+                if (applyImmediately) this.applyStyle();
             }
         },
 
@@ -433,7 +491,7 @@
             const stroke = this.config.currentStroke;
             const shadow = this.config.enableShadow ? this.config.currentShadow : 'none';
             const smooth = this.config.enableSmooth ? this.config.currentSmooth : 'auto';
-            const spacing = this.config.enableLetterSpacing ? this.config.letterSpacing : 'normal';
+            const spacing = this.config.enableLetterSpacing ? `${this.config.letterSpacing}em` : 'normal';
             const lineHeight = this.config.lineHeight;
 
             let fontRules = '';
@@ -480,9 +538,6 @@
                     /* 优化中文渲染 */
                     text-rendering: optimizeLegibility;
 
-                    /* Edge GPU加速 */
-                    transform: translateZ(0);
-                    will-change: transform;
                 }
 
                 /* 高DPI屏幕优化 */
@@ -517,7 +572,7 @@
 
                 /* 正文优化 */
                 body {
-                    letter-spacing: ${spacing}em !important;
+                    letter-spacing: ${spacing} !important;
                     line-height: ${lineHeight} !important;
                     font-feature-settings: "liga" 1, "kern" 1, "calt" 1 !important;
                 }
@@ -575,20 +630,32 @@
 
         applyStyle() {
             const style = this.generateStyle();
-            util.addStyle('mactype-enhanced-style', 'style', style);
+            return util.addStyle('mactype-enhanced-style', 'style', style);
         },
 
         addPluginStyle() {
-            if (document.head) {
-                util.addStyle('swal-pub-style', 'style', GM_getResourceText('swalStyle'));
-                this.applyStyle();
+            const installStyles = () => {
+                if (!document.head) return false;
+
+                try {
+                    const pluginStyle = GM_getResourceText('swalStyle');
+                    if (pluginStyle) util.addStyle('swal-pub-style', 'style', pluginStyle);
+                } catch (error) {
+                    console.warn('Mactype助手：设置面板样式加载失败', error);
+                }
+
+                return this.applyStyle();
+            };
+
+            if (installStyles()) return;
+
+            if (!document.documentElement) {
+                document.addEventListener('DOMContentLoaded', installStyles, {once: true});
+                return;
             }
 
             const headObserver = new MutationObserver(() => {
-                if (document.head && !document.getElementById('mactype-enhanced-style')) {
-                    util.addStyle('swal-pub-style', 'style', GM_getResourceText('swalStyle'));
-                    this.applyStyle();
-                }
+                if (installStyles()) headObserver.disconnect();
             });
 
             headObserver.observe(document.documentElement, {childList: true, subtree: true});
@@ -618,7 +685,7 @@
             // Edge首次使用推荐
             if (EDGE_CONFIG.isEdge && !util.getValue('edge_optimized', false)) {
                 this.config.currentPreset = 'edge';
-                this.applyPreset('edge');
+                this.applyPreset('edge', false);
                 this.saveConfig();
                 util.setValue('edge_optimized', true);
             }
@@ -633,8 +700,9 @@
                 // Edge特定：监听缩放变化
                 if (EDGE_CONFIG.isEdge) {
                     window.addEventListener('resize', () => {
-                        if (window.devicePixelRatio !== EDGE_CONFIG.isHighDPI) {
-                            EDGE_CONFIG.isHighDPI = window.devicePixelRatio > 1;
+                        const isHighDPI = window.devicePixelRatio > 1;
+                        if (isHighDPI !== EDGE_CONFIG.isHighDPI) {
+                            EDGE_CONFIG.isHighDPI = isHighDPI;
                             this.applyStyle();
                         }
                     });

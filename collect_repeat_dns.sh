@@ -26,16 +26,20 @@
 # 功能: 监控mosdns查询日志，检测重复域名并生成，最后会添加在规则里面辅助减少mosdns对重复域名的查询，重复次数很多的域名服务器直接TTL最大。
 # 依赖: mosdns 日志文件
 # By: BuBuXSY
-# Version: 2025-07-19
+# Version: 2026-07-11
 # ====================================================
 
 
 
 set -euo pipefail  # 严格模式：遇到错误立即退出
 
+TEMP_FILES=()
+EXTRACTED_DOMAINS_FILE=""
+EXTRACTED_STATS_FILE=""
+
 # ==== 配置文件加载 ====
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_FILE="${SCRIPT_DIR}/dns_monitor.conf"
+CONFIG_FILE="${DNS_MONITOR_CONFIG:-${SCRIPT_DIR}/dns_monitor.conf}"
 
 # 默认配置
 DEFAULT_DOMAIN_FILE="/etc/mosdns/mosdns.log"
@@ -48,11 +52,20 @@ DEFAULT_MAX_LOG_SIZE="100M"
 # 加载配置文件
 load_config() {
     if [[ -f "$CONFIG_FILE" ]]; then
-        source "$CONFIG_FILE"
+        # shellcheck source=/dev/null
+        if ! source "$CONFIG_FILE"; then
+            log_error "配置文件加载失败: $CONFIG_FILE"
+            exit 1
+        fi
         log_info "配置文件已加载: $CONFIG_FILE"
     else
         log_warn "配置文件不存在，使用默认配置"
         create_default_config
+        # shellcheck source=/dev/null
+        if [[ -f "$CONFIG_FILE" ]] && ! source "$CONFIG_FILE"; then
+            log_error "新配置文件加载失败: $CONFIG_FILE"
+            exit 1
+        fi
     fi
     
     # 设置默认值（如果配置文件中没有定义）
@@ -62,11 +75,17 @@ load_config() {
     LOG_FILE="${LOG_FILE:-$DEFAULT_LOG_FILE}"
     HISTORY_FILE="${HISTORY_FILE:-$DEFAULT_HISTORY_FILE}"
     MAX_LOG_SIZE="${MAX_LOG_SIZE:-$DEFAULT_MAX_LOG_SIZE}"
+
+    if [[ ! "$THRESHOLD" =~ ^[0-9]+$ ]]; then
+        log_error "THRESHOLD 必须是非负整数，当前值: $THRESHOLD"
+        exit 1
+    fi
+    THRESHOLD=$((10#$THRESHOLD))
 }
 
 # 创建默认配置文件
 create_default_config() {
-    cat > "$CONFIG_FILE" << EOF
+    if ! cat > "$CONFIG_FILE" << EOF
 # DNS监控配置文件
 DOMAIN_FILE="$DEFAULT_DOMAIN_FILE"
 OUTPUT_FILE="$DEFAULT_OUTPUT_FILE"
@@ -89,7 +108,13 @@ ENABLE_HISTORY=true
 ENABLE_STATS=true
 BLACKLIST_DOMAINS=("localhost" "*.local" "*.test")
 WHITELIST_ONLY=false
+# 兼容旧配置；脚本不会主动清空正在写入的源日志。
+TRUNCATE_SOURCE_LOG=false
 EOF
+    then
+        log_warn "无法写入默认配置文件，将仅在本次运行中使用默认值: $CONFIG_FILE"
+        return 0
+    fi
     log_info "已创建默认配置文件: $CONFIG_FILE"
 }
 
@@ -118,7 +143,8 @@ declare -A ICONS=(
 log_message() {
     local level="$1"
     local message="$2"
-    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    local timestamp
+    timestamp=$(date '+%Y-%m-%d %H:%M:%S')
     echo -e "${ICONS[$level]}$message"
     
     # 写入日志文件
@@ -135,12 +161,14 @@ log_error() { log_message "ERROR" "$1"; }
 # ==== 错误处理 ====
 cleanup() {
     local exit_code=$?
-    if [[ $exit_code -ne 0 ]]; then
+    if [[ $exit_code -ne 0 && $exit_code -ne 2 ]]; then
         log_error "脚本异常退出，退出码: $exit_code"
     fi
     
-    # 清理临时文件
-    rm -f /tmp/dns_monitor_*.tmp
+    # 只清理本实例创建的临时文件，避免影响并发任务。
+    if (( ${#TEMP_FILES[@]} > 0 )); then
+        rm -f -- "${TEMP_FILES[@]}"
+    fi
 }
 
 error_handler() {
@@ -153,12 +181,82 @@ error_handler() {
 trap cleanup EXIT
 trap 'error_handler $LINENO "$BASH_COMMAND"' ERR
 
+size_to_bytes() {
+    local value="${1^^}"
+    local number
+    local unit
+    local multiplier=1
+
+    if [[ ! "$value" =~ ^([0-9]+)([KMGT]?)(I?B)?$ ]]; then
+        return 1
+    fi
+
+    number=$((10#${BASH_REMATCH[1]}))
+    unit="${BASH_REMATCH[2]}"
+    case "$unit" in
+        K) multiplier=1024 ;;
+        M) multiplier=$((1024 ** 2)) ;;
+        G) multiplier=$((1024 ** 3)) ;;
+        T) multiplier=$((1024 ** 4)) ;;
+    esac
+    printf '%s\n' "$((number * multiplier))"
+}
+
+ensure_parent_directory() {
+    local file="$1"
+    local parent_dir
+    parent_dir=$(dirname "$file")
+
+    if [[ ! -d "$parent_dir" ]] && ! mkdir -p "$parent_dir"; then
+        log_error "无法创建目录: $parent_dir"
+        return 1
+    fi
+}
+
+show_help() {
+    cat << EOF
+MOSDNS 重复域名监控辅助脚本
+
+用法: $0 [选项]
+
+选项:
+  -c, --config FILE    指定配置文件（默认: $CONFIG_FILE）
+  -h, --help           显示帮助信息
+
+也可通过 DNS_MONITOR_CONFIG 环境变量指定配置文件。
+EOF
+}
+
+parse_arguments() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -c|--config)
+                if [[ -z "${2:-}" ]]; then
+                    log_error "参数 $1 缺少配置文件路径"
+                    exit 2
+                fi
+                CONFIG_FILE="$2"
+                shift 2
+                ;;
+            -h|--help)
+                show_help
+                exit 0
+                ;;
+            *)
+                log_error "未知参数: $1"
+                show_help
+                exit 2
+                ;;
+        esac
+    done
+}
+
 # ==== 文件和权限检查 ====
 check_prerequisites() {
     log_info "检查运行环境和权限..."
     
     # 检查必要的命令
-    local required_commands=("grep" "sed" "awk" "sort" "uniq" "curl")
+    local required_commands=("grep" "sed" "awk" "sort" "uniq" "mktemp" "tr")
     local optional_commands=("jq")
     
     for cmd in "${required_commands[@]}"; do
@@ -174,25 +272,35 @@ check_prerequisites() {
             log_warn "可选命令 $cmd 不可用，某些功能可能受限"
         fi
     done
+
+    if [[ "${ENABLE_WECHAT_NOTIFY:-false}" == "true" && -n "${WECHAT_WEBHOOK_URL:-}" ]] && ! command -v curl &> /dev/null; then
+        log_error "已启用企业微信通知，但缺少必要命令: curl"
+        exit 1
+    fi
     
     # 检查文件权限
     if [[ ! -r "$DOMAIN_FILE" ]]; then
         log_error "无法读取域名日志文件: $DOMAIN_FILE"
         exit 1
     fi
+    if [[ "${TRUNCATE_SOURCE_LOG:-false}" == "true" ]]; then
+        log_warn "TRUNCATE_SOURCE_LOG 已停用；请使用 mosdns 自身轮转或 logrotate 管理源日志"
+    fi
     
     # 创建输出目录
-    local output_dir
-    output_dir=$(dirname "$OUTPUT_FILE")
-    if [[ ! -d "$output_dir" ]]; then
-        mkdir -p "$output_dir" || {
-            log_error "无法创建输出目录: $output_dir"
-            exit 1
-        }
+    ensure_parent_directory "$OUTPUT_FILE"
+    if [[ "${ENABLE_HISTORY:-false}" == "true" ]]; then
+        ensure_parent_directory "$HISTORY_FILE"
+    fi
+
+    local max_log_bytes
+    if ! max_log_bytes=$(size_to_bytes "$MAX_LOG_SIZE"); then
+        log_error "MAX_LOG_SIZE 格式无效: $MAX_LOG_SIZE（示例: 100M、1G）"
+        exit 1
     fi
     
     # 检查日志文件大小并轮转
-    if [[ -f "$LOG_FILE" ]] && [[ $(stat -f%z "$LOG_FILE" 2>/dev/null || stat -c%s "$LOG_FILE" 2>/dev/null || echo 0) -gt 104857600 ]]; then
+    if [[ -f "$LOG_FILE" ]] && [[ $(stat -f%z "$LOG_FILE" 2>/dev/null || stat -c%s "$LOG_FILE" 2>/dev/null || echo 0) -gt "$max_log_bytes" ]]; then
         mv "$LOG_FILE" "${LOG_FILE}.old"
         log_info "日志文件已轮转"
     fi
@@ -204,22 +312,25 @@ extract_domains() {
     
     local temp_file
     local stats_file
+    local total_queries=0
+    local unique_domains=0
     temp_file=$(mktemp /tmp/dns_monitor_domains_XXXXXX.tmp)
     stats_file=$(mktemp /tmp/dns_monitor_stats_XXXXXX.tmp)
+    TEMP_FILES+=("$temp_file" "$stats_file")
     
     # 检查源文件是否存在且不为空
     if [[ ! -s "$DOMAIN_FILE" ]]; then
         log_warn "日志文件为空或不存在: $DOMAIN_FILE"
         # 创建空的临时文件
         touch "$temp_file"
-        local total_queries=0
-        local unique_domains=0
     else
         # 提取域名并统计，使用更安全的方式
         {
             grep -oE '"qname": "([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})' "$DOMAIN_FILE" 2>/dev/null || true
         } | {
             sed 's/"qname": "//' || true
+        } | {
+            tr '[:upper:]' '[:lower:]' || true
         } | {
             grep -v "in-addr.arpa" || true
         } | {
@@ -237,11 +348,8 @@ extract_domains() {
         
         # 计算统计信息，处理空文件情况
         if [[ -s "$temp_file" ]]; then
-            local total_queries=$(awk '{sum+=$1} END {print sum+0}' "$temp_file")
-            local unique_domains=$(wc -l < "$temp_file" | tr -d ' ')
-        else
-            local total_queries=0
-            local unique_domains=0
+            total_queries=$(awk '{sum+=$1} END {print sum+0}' "$temp_file")
+            unique_domains=$(wc -l < "$temp_file" | tr -d ' ')
         fi
     fi
     
@@ -258,7 +366,8 @@ extract_domains() {
 }
 EOF
     
-    echo "$temp_file|$stats_file"
+    EXTRACTED_DOMAINS_FILE="$temp_file"
+    EXTRACTED_STATS_FILE="$stats_file"
 }
 
 # ==== 黑白名单过滤 ====
@@ -279,8 +388,9 @@ filter_domains() {
         # 跳过空行
         [[ -z "$line" ]] && continue
         
-        local count=$(echo "$line" | awk '{print $1}')
-        local domain=$(echo "$line" | awk '{print $2}')
+        local count
+        local domain
+        read -r count domain _ <<< "$line"
         
         # 检查是否为有效的数字和域名
         if [[ ! "$count" =~ ^[0-9]+$ ]] || [[ -z "$domain" ]]; then
@@ -289,8 +399,9 @@ filter_domains() {
         
         # 黑名单过滤
         local skip=false
-        for pattern in "${BLACKLIST_DOMAINS[@]:-}"; do
-            if [[ "$domain" =~ $pattern ]]; then
+        for pattern in "${BLACKLIST_DOMAINS[@]-}"; do
+            # shellcheck disable=SC2053 # 配置项有意支持 shell glob（例如 *.example.com）
+            if [[ -n "$pattern" && "$domain" == $pattern ]]; then
                 skip=true
                 break
             fi
@@ -311,14 +422,19 @@ generate_report() {
     
     local filtered_file
     filtered_file=$(mktemp /tmp/dns_monitor_filtered_XXXXXX.tmp)
+    TEMP_FILES+=("$filtered_file")
     filter_domains "$domains_file" "$filtered_file"
+
+    local output_tmp
+    output_tmp=$(mktemp "${OUTPUT_FILE}.tmp.XXXXXX")
+    TEMP_FILES+=("$output_tmp")
     
     # 生成规则文件
     {
         echo "# 重复域名列表 - 生成时间: $(date)"
         echo "# 阈值: $THRESHOLD 次"
         echo "# =================================="
-    } > "$OUTPUT_FILE"
+    } > "$output_tmp"
     
     local duplicate_count=0
     local message_body="🌈 DNS重复域名监控报告\n"
@@ -331,6 +447,11 @@ generate_report() {
     if [[ -s "$stats_file" ]] && command -v jq >/dev/null 2>&1; then
         total_queries=$(jq -r '.total_queries // 0' "$stats_file" 2>/dev/null || echo 0)
         unique_domains=$(jq -r '.unique_domains // 0' "$stats_file" 2>/dev/null || echo 0)
+    elif [[ -s "$stats_file" ]]; then
+        total_queries=$(sed -n 's/.*"total_queries": *\([0-9][0-9]*\).*/\1/p' "$stats_file")
+        unique_domains=$(sed -n 's/.*"unique_domains": *\([0-9][0-9]*\).*/\1/p' "$stats_file")
+        total_queries="${total_queries:-0}"
+        unique_domains="${unique_domains:-0}"
     fi
     
     if [[ -s "$filtered_file" ]]; then
@@ -338,14 +459,15 @@ generate_report() {
             # 跳过空行
             [[ -z "$line" ]] && continue
             
-            local count=$(echo "$line" | awk '{print $1}')
-            local domain=$(echo "$line" | awk '{print $2}')
+            local count
+            local domain
+            read -r count domain _ <<< "$line"
             
             # 验证数据有效性
             if [[ "$count" =~ ^[0-9]+$ ]] && [[ -n "$domain" ]]; then
-                echo "full:$domain" >> "$OUTPUT_FILE"
+                printf 'full:%s\n' "$domain" >> "$output_tmp"
                 message_body+="🔥 $domain → $count 次\n"
-                ((duplicate_count++))
+                duplicate_count=$((duplicate_count + 1))
             fi
         done < "$filtered_file"
         
@@ -356,7 +478,7 @@ generate_report() {
             message_body+="• 唯一域名数: $unique_domains\n"
             message_body+="• 重复域名数: $duplicate_count\n"
             
-            log_success "发现 $duplicate_count 个重复域名，已保存到 $OUTPUT_FILE"
+            log_success "发现 $duplicate_count 个重复域名"
         else
             message_body+="✨ 未发现超过阈值的重复域名\n"
             message_body+="🎉 域名查询正常！\n"
@@ -376,6 +498,10 @@ generate_report() {
         
         log_info "未发现重复域名"
     fi
+
+    chmod 0644 "$output_tmp"
+    mv -f -- "$output_tmp" "$OUTPUT_FILE"
+    log_info "规则文件已更新: $OUTPUT_FILE"
     
     # 保存历史记录
     if [[ "${ENABLE_HISTORY:-false}" == "true" ]]; then
@@ -385,11 +511,6 @@ generate_report() {
     # 发送通知
     send_notifications "$message_body"
     
-    # 清空日志文件
-    if [[ -f "$DOMAIN_FILE" ]]; then
-        > "$DOMAIN_FILE"
-        log_info "原始日志文件已清空"
-    fi
 }
 
 # ==== 历史记录 ====
@@ -411,18 +532,22 @@ save_history() {
     
     local history_entry
     if history_entry=$(jq --argjson dup_count "$duplicate_count" '. + {duplicate_domains: $dup_count}' "$stats_file" 2>/dev/null); then
+        local temp_history
+        temp_history=$(mktemp "${HISTORY_FILE}.tmp.XXXXXX")
+        TEMP_FILES+=("$temp_history")
         if [[ -f "$HISTORY_FILE" ]]; then
-            local temp_history
-            temp_history=$(mktemp /tmp/dns_monitor_history_XXXXXX.tmp)
             if jq --argjson entry "$history_entry" '. + [$entry]' "$HISTORY_FILE" > "$temp_history" 2>/dev/null; then
-                mv "$temp_history" "$HISTORY_FILE"
+                chmod 0644 "$temp_history"
+                mv -f -- "$temp_history" "$HISTORY_FILE"
                 log_info "历史记录已更新"
             else
                 log_warn "历史记录更新失败"
                 rm -f "$temp_history"
             fi
         else
-            echo "[$history_entry]" > "$HISTORY_FILE"
+            printf '[%s]\n' "$history_entry" > "$temp_history"
+            chmod 0644 "$temp_history"
+            mv -f -- "$temp_history" "$HISTORY_FILE"
             log_info "历史记录文件已创建"
         fi
     else
@@ -433,61 +558,98 @@ save_history() {
 # ==== 通知系统 ====
 send_notifications() {
     local message="$1"
+    local failed=0
     
     # 企业微信通知
     if [[ "${ENABLE_WECHAT_NOTIFY:-true}" == "true" && -n "${WECHAT_WEBHOOK_URL:-}" ]]; then
-        send_wechat_message "$message"
+        send_wechat_message "$message" || failed=1
     fi
     
     # 邮件通知
     if [[ "${ENABLE_EMAIL_NOTIFY:-false}" == "true" ]]; then
-        send_email_notification "$message"
+        send_email_notification "$message" || failed=1
     fi
+
+    return "$failed"
 }
 
 send_wechat_message() {
     local message="$1"
     local title="【DNS域名监控报告】"
     
-    if [[ "${WECHAT_WEBHOOK_URL:-}" == *"你的KEY"* ]]; then
-        log_warn "企业微信 Webhook URL 未配置，跳过推送"
-        return
+    if [[ -z "${WECHAT_WEBHOOK_URL:-}" || "${WECHAT_WEBHOOK_URL:-}" == *"你的KEY"* ]]; then
+        log_error "企业微信 Webhook URL 未配置"
+        return 1
     fi
-    
-    local safe_message=$(echo "$message" | sed ':a;N;$!ba;s/\n/\\n/g' | sed 's/"/\\"/g')
-    local json="{\"msgtype\":\"text\",\"text\":{\"content\":\"$title\\n\\n$safe_message\"}}"
-    
-    if curl -s -f -X POST "$WECHAT_WEBHOOK_URL" -H 'Content-Type: application/json' -d "$json" >/dev/null; then
+
+    if [[ ! "$WECHAT_WEBHOOK_URL" =~ ^https?:// ]]; then
+        log_error "企业微信 Webhook URL 格式无效"
+        return 1
+    fi
+
+    message=${message//\\n/$'\n'}
+    local content="$title"$'\n\n'"$message"
+    local safe_content
+    local json
+    local response
+    safe_content=$(json_escape "$content")
+    json="{\"msgtype\":\"text\",\"text\":{\"content\":\"$safe_content\"}}"
+
+    if response=$(curl -fsS --connect-timeout 5 --max-time 15 -X POST "$WECHAT_WEBHOOK_URL" -H 'Content-Type: application/json' -d "$json") && \
+        [[ "$response" =~ \"errcode\"[[:space:]]*:[[:space:]]*0 ]]; then
         log_success "企业微信消息发送成功"
     else
-        log_error "企业微信消息发送失败"
+        log_error "企业微信消息发送失败${response:+: $response}"
+        return 1
     fi
+}
+
+json_escape() {
+    local value="$1"
+    value=${value//\\/\\\\}
+    value=${value//\"/\\\"}
+    value=${value//$'\n'/\\n}
+    value=${value//$'\r'/\\r}
+    value=${value//$'\t'/\\t}
+    printf '%s' "$value"
 }
 
 send_email_notification() {
     local message="$1"
     
     if command -v mail &> /dev/null && [[ -n "${EMAIL_TO:-}" ]]; then
-        echo -e "$message" | mail -s "${EMAIL_SUBJECT:-DNS监控报告}" "$EMAIL_TO"
-        log_info "邮件通知已发送"
+        if echo -e "$message" | mail -s "${EMAIL_SUBJECT:-DNS监控报告}" "$EMAIL_TO"; then
+            log_info "邮件通知已发送"
+        else
+            log_error "邮件通知发送失败"
+            return 1
+        fi
     else
-        log_warn "邮件功能未配置或不可用"
+        log_error "邮件功能未配置或不可用"
+        return 1
     fi
 }
 
 # ==== 性能监控 ====
 show_performance_stats() {
+    local started_at="$1"
+    local started_epoch="$2"
     if [[ "${ENABLE_STATS:-true}" == "true" ]]; then
         log_message "STATS" "脚本执行统计:"
-        log_message "STATS" "• 开始时间: $start_time"
+        log_message "STATS" "• 开始时间: $started_at"
         log_message "STATS" "• 结束时间: $(date '+%Y-%m-%d %H:%M:%S')"
-        log_message "STATS" "• 执行用时: $(($(date +%s) - $(date -d "$start_time" +%s))) 秒"
+        log_message "STATS" "• 执行用时: $(($(date +%s) - started_epoch)) 秒"
     fi
 }
 
 # ==== 主函数 ====
 main() {
-    local start_time=$(date '+%Y-%m-%d %H:%M:%S')
+    local start_time
+    local start_epoch
+    start_time=$(date '+%Y-%m-%d %H:%M:%S')
+    start_epoch=$(date +%s)
+
+    parse_arguments "$@"
     
     log_info "DNS域名监控脚本启动 v2.0"
     
@@ -498,15 +660,13 @@ main() {
     check_prerequisites
     
     # 提取域名
-    local files=$(extract_domains)
-    local domains_file=$(echo "$files" | cut -d'|' -f1)
-    local stats_file=$(echo "$files" | cut -d'|' -f2)
+    extract_domains
     
     # 生成报告
-    generate_report "$domains_file" "$stats_file"
+    generate_report "$EXTRACTED_DOMAINS_FILE" "$EXTRACTED_STATS_FILE"
     
     # 显示性能统计
-    show_performance_stats
+    show_performance_stats "$start_time" "$start_epoch"
     
     log_success "DNS域名监控完成！"
 }

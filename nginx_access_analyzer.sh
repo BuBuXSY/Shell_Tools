@@ -25,10 +25,11 @@
 # 📊 Nginx 访问日志分析脚本
 # 功能：统计状态码、Top IP、Top URL、Top UA、可疑访问，并可选推送企业微信
 # By: BuBuXSY
-# Version: 2026-05-16
+# Version: 2026-07-11
 # ====================================================
 
 set -euo pipefail
+umask 077
 
 GREEN="\e[32m"
 YELLOW="\e[33m"
@@ -43,7 +44,10 @@ TOP_N="${TOP_N:-10}"
 MAX_LINES="${MAX_LINES:-50000}"
 WEBHOOK_URL="${WEBHOOK_URL:-${WECHAT_WEBHOOK_URL:-}}"
 
+WORK_DIR=""
 REPORT_FILE=""
+SAMPLE_FILE=""
+SAMPLE_LINES=0
 
 usage() {
     cat <<EOF
@@ -93,61 +97,101 @@ error() {
 }
 
 cleanup() {
-    [[ -n "$REPORT_FILE" && -f "$REPORT_FILE" ]] && rm -f "$REPORT_FILE"
+    [[ -n "$WORK_DIR" && -d "$WORK_DIR" ]] && rm -rf -- "$WORK_DIR"
     return 0
 }
 trap cleanup EXIT
 
 prepare_report() {
-    REPORT_FILE=$(mktemp /tmp/nginx_access_report_XXXXXX.txt)
+    WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/nginx_access_analyzer.XXXXXX") || {
+        printf '❌ 无法创建临时目录\n' >&2
+        exit 1
+    }
+    REPORT_FILE="$WORK_DIR/report.txt"
+    SAMPLE_FILE="$WORK_DIR/sample.log"
+    : > "$REPORT_FILE"
 }
 
 validate() {
-    if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-        usage
-        exit 0
-    fi
+    case "$#" in
+        0) ;;
+        1)
+            if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+                usage
+                exit 0
+            fi
+            error "未知参数：$1"
+            usage >&2
+            exit 2
+            ;;
+        *)
+            error "参数过多，本脚本通过环境变量接收配置"
+            usage >&2
+            exit 2
+            ;;
+    esac
 
     if [[ ! -f "$LOG_FILE" ]]; then
         error "日志文件不存在：$LOG_FILE"
         exit 1
     fi
 
+    if [[ ! -r "$LOG_FILE" ]]; then
+        error "日志文件不可读取：$LOG_FILE"
+        exit 1
+    fi
+
     if [[ ! "$TOP_N" =~ ^[0-9]+$ || "$TOP_N" -lt 1 ]]; then
         error "TOP_N 必须是大于 0 的数字"
-        exit 1
+        exit 2
     fi
 
     if [[ ! "$MAX_LINES" =~ ^[0-9]+$ || "$MAX_LINES" -lt 1 ]]; then
         error "MAX_LINES 必须是大于 0 的数字"
-        exit 1
+        exit 2
     fi
+
+    local cmd
+    for cmd in tail awk sort head grep sed tee date tr; do
+        if ! command -v "$cmd" >/dev/null 2>&1; then
+            error "缺少必要命令：$cmd"
+            exit 1
+        fi
+    done
 }
 
-sample_log() {
-    tail -n "$MAX_LINES" "$LOG_FILE"
+snapshot_log() {
+    if ! tail -n "$MAX_LINES" -- "$LOG_FILE" \
+        | LC_ALL=C tr -d '\000-\010\013\014\016-\037\177' > "$SAMPLE_FILE"; then
+        error "读取日志失败：$LOG_FILE"
+        exit 1
+    fi
+    SAMPLE_LINES=$(awk 'END {print NR + 0}' "$SAMPLE_FILE")
 }
 
 show_overview() {
     section "基础信息"
-    local total
-    total=$(sample_log | wc -l | awk '{print $1}')
     info "📄 日志文件：$LOG_FILE"
     info "📚 分析范围：最后 $MAX_LINES 行"
-    info "🧾 实际行数：$total"
+    info "🧾 实际行数：$SAMPLE_LINES"
     info "🕒 分析时间：$(date '+%F %T')"
 }
 
 show_status_codes() {
     section "HTTP 状态码分布"
-    sample_log | awk '{code=$9; if (code ~ /^[0-9][0-9][0-9]$/) count[code]++} END {for (code in count) print count[code], code}' \
+    local output
+    output=$(awk '{code=$9; if (code ~ /^[0-9][0-9][0-9]$/) count[code]++} END {for (code in count) print count[code], code}' "$SAMPLE_FILE" \
         | sort -nr \
         | head -n "$TOP_N" \
-        | awk '{printf "   📌 %-6s %s 次\n", $2, $1}' \
-        | tee -a "$REPORT_FILE"
+        | awk '{printf "   📌 %-6s %s 次\n", $2, $1}' || true)
+    if [[ -n "$output" ]]; then
+        printf '%s\n' "$output" | tee -a "$REPORT_FILE"
+    else
+        warn "未解析到标准 Combined/Common 格式的 HTTP 状态码"
+    fi
 
     local err_count
-    err_count=$(sample_log | awk '$9 ~ /^[45][0-9][0-9]$/ {count++} END {print count+0}')
+    err_count=$(awk '$9 ~ /^[45][0-9][0-9]$/ {count++} END {print count+0}' "$SAMPLE_FILE")
     if [[ "$err_count" -gt 0 ]]; then
         warn "发现 $err_count 条 4xx/5xx 记录，请关注异常请求或后端错误"
     else
@@ -157,36 +201,51 @@ show_status_codes() {
 
 show_top_ips() {
     section "Top IP"
-    sample_log | awk '{ip=$1; if (ip != "") count[ip]++} END {for (ip in count) print count[ip], ip}' \
+    local output
+    output=$(awk '{ip=$1; if (ip != "") count[ip]++} END {for (ip in count) print count[ip], ip}' "$SAMPLE_FILE" \
         | sort -nr \
         | head -n "$TOP_N" \
-        | awk '{printf "   🌍 %-18s %s 次\n", $2, $1}' \
-        | tee -a "$REPORT_FILE"
+        | awk '{printf "   🌍 %-18s %s 次\n", $2, $1}' || true)
+    if [[ -n "$output" ]]; then
+        printf '%s\n' "$output" | tee -a "$REPORT_FILE"
+    else
+        warn "未解析到客户端 IP"
+    fi
 }
 
 show_top_urls() {
     section "Top URL"
-    sample_log | awk '{url=$7; if (url != "") count[url]++} END {for (url in count) print count[url], url}' \
+    local output
+    output=$(awk '{url=$7; if (url != "") count[url]++} END {for (url in count) print count[url], url}' "$SAMPLE_FILE" \
         | sort -nr \
         | head -n "$TOP_N" \
-        | awk '{count=$1; $1=""; sub(/^ /, ""); printf "   🔗 %-6s %s\n", count "次", $0}' \
-        | tee -a "$REPORT_FILE"
+        | awk '{count=$1; $1=""; sub(/^ /, ""); printf "   🔗 %-6s %s\n", count "次", $0}' || true)
+    if [[ -n "$output" ]]; then
+        printf '%s\n' "$output" | tee -a "$REPORT_FILE"
+    else
+        warn "未解析到请求 URL"
+    fi
 }
 
 show_top_user_agents() {
     section "Top User-Agent"
-    sample_log | awk -F'"' 'NF >= 6 {ua=$6; if (ua != "") count[ua]++} END {for (ua in count) print count[ua] "\t" ua}' \
+    local output
+    output=$(awk -F'"' 'NF >= 6 {ua=$6; if (ua != "") count[ua]++} END {for (ua in count) print count[ua] "\t" ua}' "$SAMPLE_FILE" \
         | sort -nr \
         | head -n "$TOP_N" \
-        | awk -F'\t' '{printf "   🧭 %-6s %s\n", $1 "次", $2}' \
-        | tee -a "$REPORT_FILE"
+        | awk -F'\t' '{printf "   🧭 %-6s %s\n", $1 "次", $2}' || true)
+    if [[ -n "$output" ]]; then
+        printf '%s\n' "$output" | tee -a "$REPORT_FILE"
+    else
+        info "日志格式中未包含可解析的 User-Agent"
+    fi
 }
 
 show_suspicious() {
     section "可疑访问线索"
     local patterns='wp-admin|wp-login|\.env|/etc/passwd|phpmyadmin|\.git|/boaform|HNAP1|cgi-bin|eval\(|base64|select.+from|union.+select'
     local hits
-    hits=$(sample_log | grep -Eia "$patterns" | tail -n "$TOP_N" || true)
+    hits=$(grep -Eia "$patterns" "$SAMPLE_FILE" | tail -n "$TOP_N" || true)
 
     if [[ -z "$hits" ]]; then
         ok "未命中常见扫描 / 注入 / 敏感路径特征"
@@ -196,21 +255,44 @@ show_suspicious() {
     fi
 }
 
+json_escape() {
+    local value="$1"
+    value=${value//\\/\\\\}
+    value=${value//\"/\\\"}
+    value=${value//$'\b'/\\b}
+    value=${value//$'\f'/\\f}
+    value=${value//$'\n'/\\n}
+    value=${value//$'\r'/\\r}
+    value=${value//$'\t'/\\t}
+    printf '%s' "$value"
+}
+
 send_wechat() {
     [[ -n "$WEBHOOK_URL" && "$WEBHOOK_URL" != *"你的"* ]] || return 0
 
+    if ! command -v curl >/dev/null 2>&1; then
+        warn "已配置 WEBHOOK_URL，但缺少 curl，跳过企业微信推送"
+        return 0
+    fi
+
     local clean_content
-    clean_content=$(sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g' "$REPORT_FILE" \
-        | sed ':a;N;$!ba;s/\n/\\n/g' \
-        | sed 's/"/\\"/g')
+    local escape_char=$'\033'
+    clean_content=$(sed -E "s/${escape_char}\\[[0-9;]*[[:alpha:]]//g" "$REPORT_FILE")
 
     local json
-    json="{\"msgtype\":\"text\",\"text\":{\"content\":\"📊 Nginx 访问日志分析\\n$clean_content\"}}"
+    local content
+    content="📊 Nginx 访问日志分析
+$clean_content"
+    json="{\"msgtype\":\"text\",\"text\":{\"content\":\"$(json_escape "$content")\"}}"
 
-    if curl -fsS -X POST "$WEBHOOK_URL" -H 'Content-Type: application/json' -d "$json" >/dev/null; then
+    local response
+    if ! response=$(curl -fsS --connect-timeout 5 --max-time 15 -X POST \
+        -H 'Content-Type: application/json' --data-binary "$json" -- "$WEBHOOK_URL"); then
+        warn "📣 企业微信推送失败，分析结果已在本地输出"
+    elif [[ "$response" =~ \"errcode\"[[:space:]]*:[[:space:]]*0([,}]) ]]; then
         ok "📣 企业微信推送成功"
     else
-        warn "📣 企业微信推送失败，分析结果已在本地输出"
+        warn "📣 企业微信接口返回异常：${response:0:200}"
     fi
 }
 
@@ -218,7 +300,13 @@ main() {
     prepare_report
     validate "$@"
     banner
+    snapshot_log
     show_overview
+    if [[ "$SAMPLE_LINES" -eq 0 ]]; then
+        warn "日志文件为空，没有可分析的访问记录"
+        send_wechat
+        return 0
+    fi
     show_status_codes
     show_top_ips
     show_top_urls
