@@ -211,7 +211,7 @@ parse_args() {
                     [[ "$1" == "$s" ]] && valid=1 && break
                 done
                 if [[ "$valid" -eq 0 ]]; then
-                    err "无效场景: $1（可用: $valid_scenes）"; exit 1
+                    err "无效场景: $1（可用: $valid_scenes）"; usage 2
                 fi
                 SCENE="$1"
                 SCENE_FORCED=1

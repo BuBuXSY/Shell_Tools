@@ -6,6 +6,7 @@
 [![Tools](https://img.shields.io/badge/工具数量-18-blue.svg)](README.md)
 [![Platform](https://img.shields.io/badge/平台-Linux%20%7C%20OpenWrt%20%7C%20Edge-green.svg)](README.md)
 [![License](https://img.shields.io/badge/许可证-MIT-orange.svg)](LICENSE)
+[![Security Policy](https://img.shields.io/badge/security-policy-brightgreen.svg)](SECURITY.md)
 
 ## 🎪 工具总览
 
@@ -189,9 +190,8 @@ sudo nginx -t -c /path/to/VPS_nginx_CDN_伪装网址.conf
 完整本地检查：
 
 ```bash
-sudo apt-get install shellcheck
+sudo apt-get install bats shellcheck
 ./shell_tools_lint.sh
-node ./tests/userscript_smoke_test.js
 git diff --check
 ```
 
@@ -201,8 +201,15 @@ git diff --check
 - ShellCheck warning 级问题（本机已安装时）。
 - 统一脚本头部、emoji / 彩色输出和可执行权限。
 - Userscript metadata、JavaScript 语法与 `document-start` 冒烟测试。
+- 使用 Bats 验证所有 Shell 工具的帮助入口和无副作用参数校验路径。
 
-GitHub Actions 会安装 ShellCheck 后执行同一套检查。
+GitHub Actions 会安装 Bats 与 ShellCheck 后执行同一套检查。未安装 Bats 的本地环境仍可运行静态检查，但会跳过行为测试。
+
+## 🤝 参与贡献
+
+欢迎提交 bug 报告、兼容性修复和独立可复用的运维工具。提交前请阅读 [贡献指南](CONTRIBUTING.md)、[安全策略](SECURITY.md) 和 [变更日志](CHANGELOG.md)，并执行 `./shell_tools_lint.sh`。
+
+项目定位为安全、可审计、可独立执行的运维工具箱：新脚本应明确副作用、提供 `--help`、校验外部下载内容，并避免提交密钥、真实域名或机器配置。
 
 ## 🧭 兼容性
 

@@ -21,13 +21,10 @@ jobs:
       - name: 📥 Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-      - name: 📦 Install ShellCheck
+      - name: 📦 Install test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends --yes shellcheck
+          sudo apt-get install --no-install-recommends --yes bats shellcheck
 
       - name: 🧪 Run repository self check
         run: ./shell_tools_lint.sh
-
-      - name: 🧩 Run userscript smoke tests
-        run: node ./tests/userscript_smoke_test.js

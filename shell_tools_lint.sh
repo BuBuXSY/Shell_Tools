@@ -173,6 +173,25 @@ check_userscript_smoke() {
     fi
 }
 
+check_shell_behavior() {
+    local test_files=()
+    shopt -s nullglob
+    test_files=("$SCRIPT_DIR"/tests/*.bats)
+    shopt -u nullglob
+
+    [[ "${#test_files[@]}" -gt 0 ]] || return 0
+    if ! command -v bats >/dev/null 2>&1; then
+        log_warn "未安装 bats，跳过 Shell 行为测试"
+        return 0
+    fi
+
+    if bats "${test_files[@]}"; then
+        log_ok "Shell 行为测试通过"
+    else
+        fail "Shell 行为测试失败"
+    fi
+}
+
 check_readme_inventory() {
     local readme="$SCRIPT_DIR/README.md"
     local file name
@@ -226,6 +245,7 @@ main() {
     done
 
     check_userscript_smoke
+    check_shell_behavior
     check_readme_inventory "${shell_files[@]}" "${userscript_files[@]}" "${config_files[@]}"
 
     if [[ "$CHECKED" -eq 0 ]]; then

@@ -1,0 +1,38 @@
+name: Bug report
+description: Report a reproducible problem in a Shell tool or userscript.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Shell tool
+        - Userscript
+        - Documentation
+        - CI
+    validations:
+      required: true
+  - type: input
+    id: script
+    attributes:
+      label: Script or file
+      placeholder: update_frp.sh
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Distribution, version, architecture, and shell version. Do not include private hostnames or addresses.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Exact sanitized command, observed output, and expected behavior.
+    validations:
+      required: true
