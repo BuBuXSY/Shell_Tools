@@ -134,8 +134,8 @@ if [[ -z "$webhook_url" || "$webhook_url" == *"你的"* ]]; then
     webhook_url=""
 fi
 
-if [[ "$push_enabled" == true && -n "$webhook_url" && ! "$webhook_url" =~ ^https?:// ]]; then
-    log_error "Webhook URL 格式无效，必须以 http:// 或 https:// 开头。"
+if [[ "$push_enabled" == true && -n "$webhook_url" && ! "$webhook_url" =~ ^https://[^[:space:][:cntrl:]]+$ ]]; then
+    log_error "Webhook URL 格式无效，必须使用 https:// 且不能包含空白或控制字符。"
     exit 2
 fi
 
@@ -237,7 +237,7 @@ safe_message=$(json_escape "$message")
 json="{\"msgtype\":\"text\",\"text\":{\"content\":\"$safe_message\"}}"
 response=""
 
-if response=$(curl -fsS --connect-timeout 5 --max-time 15 -X POST "$webhook_url" \
+if response=$(curl --fail-with-body --silent --show-error --proto '=https' --proto-redir '=https' --connect-timeout 5 --max-time 15 -X POST "$webhook_url" \
     -H 'Content-Type: application/json' -d "$json") && \
     [[ "$response" =~ \"errcode\"[[:space:]]*:[[:space:]]*0 ]]; then
     log_ok "🎉 推送成功！"

@@ -140,8 +140,8 @@ if [[ ! "$CACHE_TIMEOUT" =~ ^[1-9][0-9]*$ ]]; then
 fi
 CACHE_TIMEOUT=$((10#$CACHE_TIMEOUT))
 
-if [[ "$DRY_RUN" == false && -n "$WEBHOOK_URL" && "$WEBHOOK_URL" != *"你的"* && ! "$WEBHOOK_URL" =~ ^https?:// ]]; then
-  log_error "Webhook URL 格式无效，必须以 http:// 或 https:// 开头。"
+if [[ "$DRY_RUN" == false && -n "$WEBHOOK_URL" && "$WEBHOOK_URL" != *"你的"* && ! "$WEBHOOK_URL" =~ ^https://[^[:space:][:cntrl:]]+$ ]]; then
+  log_error "Webhook URL 格式无效，必须使用 https:// 且不能包含空白或控制字符。"
   exit 2
 fi
 
@@ -305,7 +305,7 @@ SAFE_CONTENT=$(json_escape "$REPORT_CONTENT")
 PAYLOAD="{\"msgtype\":\"text\",\"text\":{\"content\":\"$SAFE_CONTENT\"}}"
 RESPONSE=""
 
-if RESPONSE=$(curl -fsS --connect-timeout 5 --max-time 15 -X POST \
+if RESPONSE=$(curl --fail-with-body --silent --show-error --proto '=https' --proto-redir '=https' --connect-timeout 5 --max-time 15 -X POST \
   -H "Content-Type: application/json" -d "$PAYLOAD" "$WEBHOOK_URL") && \
   [[ "$RESPONSE" =~ \"errcode\"[[:space:]]*:[[:space:]]*0 ]]; then
   log "Status report sent successfully."

@@ -69,6 +69,8 @@ SYSCTL_TMP=""
 SYSCTL_CONFIG_TMP=""
 LIMITS_TMP=""
 DEGRADED=0
+TRANSACTION_ACTIVE=0
+TRANSACTION_COMMITTED=0
 RUNTIME_RESTORE_SCRIPT=""
 declare -A RUNTIME_SNAPSHOTS=()
 
@@ -374,6 +376,9 @@ backup_sysctl() {
     fi
     : > "$BACKUP_DIR/runtime_snapshot.txt" \
         || { err "无法创建 sysctl 运行时快照"; exit 1; }
+    for f in "$SYSCTL_CONF" /etc/security/limits.conf /etc/modules-load.d/netfilter.conf; do
+        if [[ -e "$f" ]]; then printf '%s\n' "present:$f"; else printf '%s\n' "absent:$f"; fi
+    done > "$BACKUP_DIR/persistent_state.txt"
     if ! sysctl -a >> "$BACKUP_DIR/runtime_snapshot.txt" 2>/dev/null; then
         warn "sysctl 运行时快照存在不可读取项，已保留可读取部分"
     fi
@@ -448,6 +453,7 @@ EOF
     fi
     chmod 0700 "$RUNTIME_RESTORE_SCRIPT" \
         || { err "无法设置运行时恢复脚本权限"; exit 1; }
+    TRANSACTION_ACTIVE=1
     ok "备份 → $BACKUP_DIR（恢复脚本: $RUNTIME_RESTORE_SCRIPT）"
 }
 
@@ -1258,6 +1264,7 @@ main() {
     esac
 
     verify_settings
+    TRANSACTION_COMMITTED=1
     show_summary
     if [[ "$DEGRADED" -ne 0 ]]; then
         err "部分关键参数未成功应用，请检查日志并确认内核支持情况"
@@ -1267,11 +1274,37 @@ main() {
     return 0
 }
 
+restore_persistent_on_failure() {
+    [[ -d "$BACKUP_DIR" ]] || return 1
+    local state path backup
+    while IFS=: read -r state path; do
+        case "$path" in
+            "$SYSCTL_CONF") backup="$BACKUP_DIR/etc/sysctl.d/$(basename "$SYSCTL_CONF")" ;;
+            /etc/security/limits.conf) backup="$BACKUP_DIR/etc/security/limits.conf" ;;
+            /etc/modules-load.d/netfilter.conf) backup="$BACKUP_DIR/etc/modules-load.d/netfilter.conf" ;;
+            *) continue ;;
+        esac
+        if [[ "$state" == present && -f "$backup" ]]; then
+            cp -p -- "$backup" "$path" || return 1
+        elif [[ "$state" == absent ]]; then
+            rm -f -- "$path" || return 1
+        fi
+    done < "$BACKUP_DIR/persistent_state.txt"
+}
+
 cleanup() {
+    local status=$?
     [[ -n "$SYSCTL_TMP" ]] && rm -f "$SYSCTL_TMP"
     [[ -n "$SYSCTL_CONFIG_TMP" ]] && rm -f "$SYSCTL_CONFIG_TMP"
     [[ -n "$LIMITS_TMP" ]] && rm -f "$LIMITS_TMP"
-    return 0
+    if [[ "$status" -ne 0 && "$TRANSACTION_ACTIVE" -eq 1 && "$TRANSACTION_COMMITTED" -eq 0 ]]; then
+        if restore_persistent_on_failure; then
+            warn "已恢复本轮持久化文件；运行时内核状态仍需执行 ${RUNTIME_RESTORE_SCRIPT:-备份目录中的 RESTORE_RUNTIME.sh} 补偿恢复。"
+        else
+            err "持久化文件自动恢复失败；备份位于 $BACKUP_DIR。"
+        fi
+    fi
+    return "$status"
 }
 
 trap cleanup EXIT

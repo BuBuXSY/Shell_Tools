@@ -989,13 +989,16 @@ force_renew_certificate() {
 
 # 创建证书目录
 create_cert_directory() {
-    if [[ ! -d "$CERT_DIR" ]]; then
-        mkdir -p "$CERT_DIR"
-        chmod 755 "$CERT_DIR"
-        log "SUCCESS" "证书目录创建成功: $CERT_DIR"
-    else
-        log "INFO" "证书目录已存在: $CERT_DIR"
+    if [[ -e "$CERT_DIR" && ! -d "$CERT_DIR" || -L "$CERT_DIR" ]]; then
+        error_exit "证书目录必须是非符号链接目录: $CERT_DIR"
     fi
+    if [[ ! -d "$CERT_DIR" ]]; then
+        mkdir -p -- "$CERT_DIR" || error_exit "无法创建证书目录: $CERT_DIR"
+        log "SUCCESS" "证书目录创建成功: $CERT_DIR"
+    fi
+    chmod 0750 -- "$CERT_DIR" || error_exit "无法收紧证书目录权限: $CERT_DIR"
+    [[ "$(stat -c '%a' -- "$CERT_DIR" 2>/dev/null || stat -f '%Lp' -- "$CERT_DIR")" =~ ^(700|750)$ ]] \
+        || error_exit "证书目录权限不安全: $CERT_DIR"
 }
 
 # 检查nginx状态
@@ -1048,12 +1051,16 @@ install_certificate() {
 
     # 安装证书
     if acme.sh "${install_args[@]}" >/dev/null 2>&1; then
-        
+        local cert_file="$CERT_DIR/${DOMAIN}.cert.pem" key_file="$CERT_DIR/${DOMAIN}.key.pem" fullchain_file="$CERT_DIR/${DOMAIN}.fullchain.pem"
+        [[ -f "$cert_file" && -f "$key_file" && -f "$fullchain_file" ]] || error_exit "acme.sh 未生成完整证书文件"
+        [[ ! -L "$cert_file" && ! -L "$key_file" && ! -L "$fullchain_file" ]] || error_exit "证书文件不能是符号链接"
+        chmod 0644 "$cert_file" "$fullchain_file" || error_exit "无法设置证书文件权限"
+        chmod 0600 "$key_file" || error_exit "无法设置私钥权限"
+        [[ "$(stat -c '%a' "$key_file" 2>/dev/null || stat -f '%Lp' "$key_file")" == 600 ]] || error_exit "私钥权限验证失败"
         log "SUCCESS" "证书安装成功"
-        log "INFO" "证书文件位置:"
-        log "INFO" "  - 证书: $CERT_DIR/${DOMAIN}.cert.pem"
-        log "INFO" "  - 私钥: $CERT_DIR/${DOMAIN}.key.pem"
-        log "INFO" "  - 完整链: $CERT_DIR/${DOMAIN}.fullchain.pem"
+        log "INFO" "证书文件位置: $cert_file"
+        log "INFO" "私钥文件位置: $key_file"
+        log "INFO" "完整链文件位置: $fullchain_file"
     else
         error_exit "证书安装失败"
     fi

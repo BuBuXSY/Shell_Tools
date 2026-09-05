@@ -284,6 +284,11 @@ json_escape() {
 send_wechat() {
     [[ -n "$WEBHOOK_URL" && "$WEBHOOK_URL" != *"你的"* ]] || return 0
 
+    if [[ ! "$WEBHOOK_URL" =~ ^https://[^[:space:][:cntrl:]]+$ ]]; then
+        log_warn "Webhook URL 必须使用 https://，已跳过推送"
+        return 1
+    fi
+
     if ! has_cmd curl; then
         log_warn "已配置 WEBHOOK_URL，但缺少 curl，跳过企业微信推送"
         return 0
@@ -302,7 +307,7 @@ $lines"
     json="{\"msgtype\":\"text\",\"text\":{\"content\":\"$(json_escape "$content")\"}}"
 
     local response
-    if ! response=$(curl -fsS --connect-timeout 5 --max-time 15 -X POST \
+    if ! response=$(curl --fail-with-body --silent --show-error --proto '=https' --proto-redir '=https' --connect-timeout 5 --max-time 15 -X POST \
         -H 'Content-Type: application/json' --data-binary "$json" -- "$WEBHOOK_URL"); then
         log_warn "📣 企业微信推送失败，巡检结果已在本地输出"
     elif [[ "$response" =~ \"errcode\"[[:space:]]*:[[:space:]]*0[[:space:]]*([,}]) ]]; then

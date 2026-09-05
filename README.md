@@ -13,7 +13,7 @@
 | 🔧 文件 | 🎯 用途 | ⚠️ 运行特性 |
 | --- | --- | --- |
 | `Auto_Upgrade_Nginx.sh` | 🌐 源码编译安装 / 升级 Nginx | root；官方验签；失败事务回滚 |
-| `collect_repeat_dns.sh` | 🧠 分析 mosdns 重复查询域名 | 原子更新规则；不清空源日志 |
+| `collect_repeat_dns.sh` | 🧠 分析 mosdns 重复查询域名 | 纯文本配置；原子更新规则；单实例锁；不清空源日志 |
 | `disk_usage_analyzer.sh` | 💽 磁盘空间占用分析 | 只读；支持多目录 |
 | `enhanced-doh-test.sh` | 🧪 测试 DoH 节点延迟和能力 | 表格 / JSON / CSV |
 | `install_cert.sh` | 🔐 申请、续期、部署 SSL 证书 | root；固定校验 acme.sh 来源 |
@@ -120,7 +120,8 @@ LOG_FILE=/var/log/nginx/access.log TOP_N=20 ./nginx_access_analyzer.sh
 | `system_config_backup.sh` | `BACKUP_DIR`、`EXTRA_PATHS`、`KEEP_DAYS` |
 | 推送类脚本 | `WEBHOOK_URL` 或 `WECHAT_WEBHOOK_URL` |
 
-企业微信 webhook 建议只通过环境变量传入，避免把密钥提交到 Git：
+`collect_repeat_dns.sh` 配置使用 `KEY=VALUE` 纯文本格式，不再执行或支持 Bash 数组/命令替换；`BLACKLIST_DOMAINS` 使用重复键（每行一个模式）。配置必须是非符号链接普通文件。锁默认为 `/run/lock/collect_repeat_dns.lock`，测试或受限环境可用 `DNS_MONITOR_LOCK_FILE` 覆盖。通知 webhook 仅接受 `https://`。
+
 
 ```bash
 export WEBHOOK_URL="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx"
@@ -156,7 +157,9 @@ export WEBHOOK_URL="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx"
 - 下载内容先进入独立临时目录，并按来源校验固定 SHA-256、官方签名、固定 commit、文件类型和归档路径后再安装。
 - Nginx、FRP、GeoIP 和备份更新使用暂存文件与原子替换，降低中断后留下半成品的风险。
 - Nginx / FRP 服务启动失败时保留或恢复升级前二进制。
-- `install_cert.sh` 不再使用 `curl | sh`，远程安装器会先保存到临时文件再执行。
+- `install_cert.sh` 要求证书目录为非符号链接目录并收紧至 `0750`；私钥会在部署后验证并设为 `0600`，证书和完整链为 `0644`。目录 `0755` 本身不等同于泄露私钥，但该工具现在默认采取更严格的最小访问策略。
+- `kernel_optimization.sh` 先在目标目录中生成并原子替换持久化文件，保留文件存在状态、配置备份和运行时恢复脚本。失败时会清理候选文件并明确报告备份/恢复位置；运行时内核参数只能补偿性恢复，不能提供内核级原子事务保证。
+- 所有企业微信 webhook 仅接受 HTTPS，并限制 curl 协议及重定向为 HTTPS。
 - 日志分析与 webhook 推送会清理控制字符、转义 JSON，并检查企业微信应用层状态。
 - 备份脚本拒绝根目录和路径穿越输入，归档默认权限为 `600`。
 

@@ -48,38 +48,55 @@ DEFAULT_THRESHOLD=500
 DEFAULT_LOG_FILE="/var/log/dns_monitor.log"
 DEFAULT_HISTORY_FILE="/var/log/dns_monitor_history.json"
 DEFAULT_MAX_LOG_SIZE="100M"
+LOCK_FILE="${DNS_MONITOR_LOCK_FILE:-/run/lock/collect_repeat_dns.lock}"
+LOCK_FD=9
 
-# 加载配置文件
+# 仅解析受限的 KEY=VALUE 纯文本；绝不执行配置内容。
+parse_config_value() {
+    local key="$1" value="$2"
+    case "$key" in
+        DOMAIN_FILE|OUTPUT_FILE|LOG_FILE|HISTORY_FILE|LOCK_FILE|MAX_LOG_SIZE|EMAIL_TO|EMAIL_SUBJECT|WECHAT_WEBHOOK_URL) ;;
+        THRESHOLD) [[ "$value" =~ ^[0-9]+$ ]] || return 1 ;;
+        ENABLE_WECHAT_NOTIFY|ENABLE_EMAIL_NOTIFY|ENABLE_HISTORY|ENABLE_STATS|WHITELIST_ONLY|TRUNCATE_SOURCE_LOG) [[ "$value" == true || "$value" == false ]] || return 1 ;;
+        BLACKLIST_DOMAINS) ;;
+        *) return 1 ;;
+    esac
+    [[ "$value" != *$'\n'* && "$value" != *$'\r'* && "$value" != *';'* && "$value" != *'`'* && "$value" != *'$('* ]] || return 1
+    case "$key" in
+        BLACKLIST_DOMAINS) BLACKLIST_DOMAINS+=("$value") ;;
+        *) printf -v "$key" '%s' "$value" ;;
+    esac
+}
+
 load_config() {
-    if [[ -f "$CONFIG_FILE" ]]; then
-        # shellcheck source=/dev/null
-        if ! source "$CONFIG_FILE"; then
-            log_error "配置文件加载失败: $CONFIG_FILE"
-            exit 1
-        fi
+    : "${DOMAIN_FILE:=$DEFAULT_DOMAIN_FILE}"; : "${OUTPUT_FILE:=$DEFAULT_OUTPUT_FILE}"
+    : "${THRESHOLD:=$DEFAULT_THRESHOLD}"; : "${LOG_FILE:=$DEFAULT_LOG_FILE}"
+    : "${HISTORY_FILE:=$DEFAULT_HISTORY_FILE}"; : "${MAX_LOG_SIZE:=$DEFAULT_MAX_LOG_SIZE}"
+    : "${LOCK_FILE:=${DNS_MONITOR_LOCK_FILE:-/run/lock/collect_repeat_dns.lock}}"
+    BLACKLIST_DOMAINS=localhost
+BLACKLIST_DOMAINS=*.local
+BLACKLIST_DOMAINS=*.test
+    if [[ -e "$CONFIG_FILE" ]]; then
+        [[ -f "$CONFIG_FILE" && ! -L "$CONFIG_FILE" && -r "$CONFIG_FILE" ]] || { log_error "配置必须是可读的普通文件且不能是符号链接: $CONFIG_FILE"; exit 1; }
+        local line key value lineno=0
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            lineno=$((lineno + 1)); line="${line%%#*}"
+            [[ -z "${line//[[:space:]]/}" ]] && continue
+            if [[ "$line" =~ ^[[:space:]]*([A-Z_][A-Z0-9_]*)[[:space:]]*=[[:space:]]*(.*)[[:space:]]*$ ]]; then
+                key="${BASH_REMATCH[1]}"; value="${BASH_REMATCH[2]}"
+                if [[ "$value" =~ ^\"(.*)\"$ || "$value" =~ ^\'(.*)\'$ ]]; then value="${BASH_REMATCH[1]}"; fi
+                parse_config_value "$key" "$value" || { log_error "配置第 $lineno 行无效或包含不安全内容: $key"; exit 1; }
+            else
+                log_error "配置第 $lineno 行语法无效；请使用纯文本 KEY=VALUE 格式"; exit 1
+            fi
+        done < "$CONFIG_FILE"
         log_info "配置文件已加载: $CONFIG_FILE"
+    elif [[ "${DNS_MONITOR_CREATE_CONFIG:-false}" == true ]]; then
+        log_warn "配置文件不存在，使用默认配置"; create_default_config
     else
-        log_warn "配置文件不存在，使用默认配置"
-        create_default_config
-        # shellcheck source=/dev/null
-        if [[ -f "$CONFIG_FILE" ]] && ! source "$CONFIG_FILE"; then
-            log_error "新配置文件加载失败: $CONFIG_FILE"
-            exit 1
-        fi
+        log_warn "配置文件不存在，使用默认配置（不会自动写入系统路径）"
     fi
-    
-    # 设置默认值（如果配置文件中没有定义）
-    DOMAIN_FILE="${DOMAIN_FILE:-$DEFAULT_DOMAIN_FILE}"
-    OUTPUT_FILE="${OUTPUT_FILE:-$DEFAULT_OUTPUT_FILE}"
-    THRESHOLD="${THRESHOLD:-$DEFAULT_THRESHOLD}"
-    LOG_FILE="${LOG_FILE:-$DEFAULT_LOG_FILE}"
-    HISTORY_FILE="${HISTORY_FILE:-$DEFAULT_HISTORY_FILE}"
-    MAX_LOG_SIZE="${MAX_LOG_SIZE:-$DEFAULT_MAX_LOG_SIZE}"
-
-    if [[ ! "$THRESHOLD" =~ ^[0-9]+$ ]]; then
-        log_error "THRESHOLD 必须是非负整数，当前值: $THRESHOLD"
-        exit 1
-    fi
+    [[ "$THRESHOLD" =~ ^[0-9]+$ ]] || { log_error "THRESHOLD 必须是非负整数"; exit 1; }
     THRESHOLD=$((10#$THRESHOLD))
 }
 
@@ -106,7 +123,9 @@ EMAIL_SUBJECT="DNS域名监控报告"
 # 高级配置
 ENABLE_HISTORY=true
 ENABLE_STATS=true
-BLACKLIST_DOMAINS=("localhost" "*.local" "*.test")
+BLACKLIST_DOMAINS=localhost
+BLACKLIST_DOMAINS=*.local
+BLACKLIST_DOMAINS=*.test
 WHITELIST_ONLY=false
 # 兼容旧配置；脚本不会主动清空正在写入的源日志。
 TRUNCATE_SOURCE_LOG=false
@@ -287,8 +306,16 @@ check_prerequisites() {
         log_warn "TRUNCATE_SOURCE_LOG 已停用；请使用 mosdns 自身轮转或 logrotate 管理源日志"
     fi
     
-    # 创建输出目录
     ensure_parent_directory "$OUTPUT_FILE"
+    if ! command -v flock >/dev/null 2>&1; then
+        log_error "缺少必要命令: flock"; exit 1
+    fi
+    ensure_parent_directory "$LOCK_FILE"
+    eval "exec ${LOCK_FD}>\"$LOCK_FILE\""
+    if ! flock -n "$LOCK_FD"; then
+        log_warn "已有 DNS 监控任务运行，退出以避免并发覆盖"
+        exit 1
+    fi
     if [[ "${ENABLE_HISTORY:-false}" == "true" ]]; then
         ensure_parent_directory "$HISTORY_FILE"
     fi
@@ -582,8 +609,8 @@ send_wechat_message() {
         return 1
     fi
 
-    if [[ ! "$WECHAT_WEBHOOK_URL" =~ ^https?:// ]]; then
-        log_error "企业微信 Webhook URL 格式无效"
+    if [[ ! "$WECHAT_WEBHOOK_URL" =~ ^https://[^[:space:][:cntrl:]]+$ ]]; then
+        log_error "企业微信 Webhook URL 格式无效，必须使用 HTTPS"
         return 1
     fi
 
@@ -595,7 +622,7 @@ send_wechat_message() {
     safe_content=$(json_escape "$content")
     json="{\"msgtype\":\"text\",\"text\":{\"content\":\"$safe_content\"}}"
 
-    if response=$(curl -fsS --connect-timeout 5 --max-time 15 -X POST "$WECHAT_WEBHOOK_URL" -H 'Content-Type: application/json' -d "$json") && \
+    if response=$(curl --fail-with-body --silent --show-error --proto '=https' --proto-redir '=https' --connect-timeout 5 --max-time 15 -X POST "$WECHAT_WEBHOOK_URL" -H 'Content-Type: application/json' -d "$json") && \
         [[ "$response" =~ \"errcode\"[[:space:]]*:[[:space:]]*0 ]]; then
         log_success "企业微信消息发送成功"
     else
