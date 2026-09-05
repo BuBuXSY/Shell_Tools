@@ -52,6 +52,9 @@ WARN_DAYS="${WARN_DAYS:-15}"
 CERT_DIRS="${CERT_DIRS:-/etc/nginx/ssl /etc/nginx/cert_file /etc/letsencrypt/live /etc/x-ui}"
 WEBHOOK_URL="${WEBHOOK_URL:-${WECHAT_WEBHOOK_URL:-}}"
 EXIT_ON_WARNING="${EXIT_ON_WARNING:-0}"
+REMOTE_HOST="${REMOTE_HOST:-}"
+REMOTE_PORT="${REMOTE_PORT:-443}"
+REMOTE_TIMEOUT="${REMOTE_TIMEOUT:-5}"
 
 TOTAL=0
 WARN_COUNT=0
@@ -69,6 +72,7 @@ usage() {
 
 用法:
   ./ssl_cert_monitor.sh
+  ./ssl_cert_monitor.sh --remote-host example.invalid --remote-port 443
   WARN_DAYS=30 ./ssl_cert_monitor.sh
   CERT_DIRS="/etc/nginx/ssl /etc/letsencrypt/live" ./ssl_cert_monitor.sh
 
@@ -78,6 +82,11 @@ usage() {
   WEBHOOK_URL        📣 企业微信 webhook，可选
   WECHAT_WEBHOOK_URL 📣 企业微信 webhook，可选
   EXIT_ON_WARNING    🚦 设为 1 时，证书告警或解析失败后以状态码 1 退出
+  REMOTE_HOST        🌐 可选远程 TLS 主机；仅在显式设置时连接
+  REMOTE_PORT        🔌 远程 TLS 端口，默认 443
+  REMOTE_TIMEOUT     ⏱️ 远程 TLS 连接超时秒数，默认 5
+
+选项：--remote-host HOST [--remote-port PORT] [--remote-timeout SECONDS]
 EOF
 }
 
@@ -101,42 +110,39 @@ add_report_line() {
 }
 
 validate() {
-    case "$#" in
-        0) ;;
-        1)
-            if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-                usage
-                exit 0
-            fi
-            log_error "未知参数：$1"
-            usage >&2
-            exit 2
-            ;;
-        *)
-            log_error "参数过多，本脚本通过环境变量接收配置"
-            usage >&2
-            exit 2
-            ;;
-    esac
-
-    if [[ ! "$WARN_DAYS" =~ ^[0-9]+$ ]]; then
-        log_error "WARN_DAYS 必须是大于等于 0 的整数"
-        exit 2
-    fi
-    if [[ "$EXIT_ON_WARNING" != "0" && "$EXIT_ON_WARNING" != "1" ]]; then
-        log_error "EXIT_ON_WARNING 只能是 0 或 1"
-        exit 2
-    fi
-
-    local cmd
-    for cmd in openssl date find awk sed mktemp; do
-        if ! has_cmd "$cmd"; then
-            log_error "缺少必要命令：$cmd"
-            exit 1
-        fi
+    while (( $# )); do
+        case "$1" in
+            -h|--help) usage; exit 0 ;;
+            --remote-host) [[ $# -ge 2 && -n ${2:-} ]] || { log_error "参数 $1 缺少主机"; exit 2; }; REMOTE_HOST=$2; shift 2 ;;
+            --remote-host=*) REMOTE_HOST=${1#*=}; shift ;;
+            --remote-port) [[ $# -ge 2 ]] || { log_error "参数 $1 缺少端口"; exit 2; }; REMOTE_PORT=$2; shift 2 ;;
+            --remote-port=*) REMOTE_PORT=${1#*=}; shift ;;
+            --remote-timeout) [[ $# -ge 2 ]] || { log_error "参数 $1 缺少超时"; exit 2; }; REMOTE_TIMEOUT=$2; shift 2 ;;
+            --remote-timeout=*) REMOTE_TIMEOUT=${1#*=}; shift ;;
+            *) log_error "未知参数：$1"; usage >&2; exit 2 ;;
+        esac
     done
-
+    [[ "$WARN_DAYS" =~ ^[0-9]+$ ]] || { log_error "WARN_DAYS 必须是大于等于 0 的整数"; exit 2; }
+    [[ "$EXIT_ON_WARNING" == 0 || "$EXIT_ON_WARNING" == 1 ]] || { log_error "EXIT_ON_WARNING 只能是 0 或 1"; exit 2; }
+    [[ "$REMOTE_PORT" =~ ^[0-9]+$ ]] && (( REMOTE_PORT >= 1 && REMOTE_PORT <= 65535 )) || { log_error "REMOTE_PORT 必须是 1-65535 的整数"; exit 2; }
+    [[ "$REMOTE_TIMEOUT" =~ ^[1-9][0-9]*$ ]] && (( REMOTE_TIMEOUT <= 300 )) || { log_error "REMOTE_TIMEOUT 必须是 1-300 的整数"; exit 2; }
+    if [[ -n "$REMOTE_HOST" && ! "$REMOTE_HOST" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*[A-Za-z0-9]$ && ! "$REMOTE_HOST" =~ ^[A-Za-z0-9]$ ]]; then log_error "REMOTE_HOST 无效"; exit 2; fi
+    local cmd
+    for cmd in openssl date find awk sed mktemp; do has_cmd "$cmd" || { log_error "缺少必要命令：$cmd"; exit 1; }; done
     read -r -a CERT_PATHS <<< "$CERT_DIRS"
+}
+
+collect_remote_cert() {
+    [[ -n "$REMOTE_HOST" ]] || return 0
+    local cert_file
+    cert_file=$(mktemp "${TMPDIR:-/tmp}/ssl-remote-cert.XXXXXX") || { log_warn "无法创建远程证书临时文件"; SCAN_FAILURES=$((SCAN_FAILURES + 1)); return; }
+    TEMP_FILES+=("$cert_file")
+    if ! timeout "$REMOTE_TIMEOUT" openssl s_client -connect "${REMOTE_HOST}:${REMOTE_PORT}" -servername "$REMOTE_HOST" -showcerts </dev/null 2>/dev/null | openssl x509 -outform PEM > "$cert_file" 2>/dev/null; then
+        log_warn "远程 TLS 连接或证书读取失败：${REMOTE_HOST}:${REMOTE_PORT}"
+        SCAN_FAILURES=$((SCAN_FAILURES + 1)); return
+    fi
+    CERT_FILES+=("$cert_file")
+    log_info "已读取远程 TLS 证书：${REMOTE_HOST}:${REMOTE_PORT}"
 }
 
 collect_cert_files() {
@@ -324,6 +330,7 @@ main() {
     log_info "⏰ 告警阈值：剩余 ${WARN_DAYS} 天及以内"
 
     collect_cert_files
+    collect_remote_cert
     if [[ "${#CERT_FILES[@]}" -eq 0 ]]; then
         log_warn "未找到证书文件，请通过 CERT_DIRS 指定扫描目录"
         [[ "$EXIT_ON_WARNING" == "1" ]] && exit 1

@@ -54,6 +54,8 @@ TIMEOUT=5
 OUTPUT_FORMAT="table"
 DEBUG=false
 RUN_DIAGNOSIS=false
+DOH_ENDPOINT="${DOH_ENDPOINT:-}"
+MAX_CONCURRENCY="${MAX_CONCURRENCY:-4}"
 
 PURPLE="$MAGENTA"
 NC="$RESET"
@@ -335,6 +337,8 @@ show_help() {
   -t, --timeout TIMEOUT 超时时间 (默认: ${TIMEOUT}s)
   -f, --format FORMAT    输出格式: table, json, csv (默认: table)
   --debug                调试模式
+  --endpoint URL         仅测试自定义 DoH endpoint（必须 HTTPS）
+  --max-concurrency N    并发请求数（默认 4）
   --diagnosis            网络诊断
   --no-color             禁用 ANSI 颜色
   --color=MODE           auto、always 或 never
@@ -379,6 +383,10 @@ while [[ $# -gt 0 ]]; do
             OUTPUT_FORMAT="$2"
             shift 2
             ;;
+        --endpoint) [[ $# -ge 2 ]] || exit 2; DOH_ENDPOINT=$2; shift 2 ;;
+        --endpoint=*) DOH_ENDPOINT=${1#*=}; shift ;;
+        --max-concurrency) [[ $# -ge 2 ]] || exit 2; MAX_CONCURRENCY=$2; shift 2 ;;
+        --max-concurrency=*) MAX_CONCURRENCY=${1#*=}; shift ;;
         --debug)
             DEBUG=true
             shift
@@ -399,6 +407,8 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+if [[ -n "$DOH_ENDPOINT" && ! "$DOH_ENDPOINT" =~ ^https://[^[:space:]]+$ ]]; then echo "endpoint 必须使用 https://" >&2; exit 2; fi
+[[ "$MAX_CONCURRENCY" =~ ^[1-9][0-9]*$ ]] && (( MAX_CONCURRENCY <= 32 )) || { echo "并发数必须是 1-32 的整数" >&2; exit 2; }
 if ! valid_domain "$TEST_DOMAIN"; then
     echo "无效测试域名: $TEST_DOMAIN" >&2
     exit 2
@@ -450,14 +460,18 @@ main() {
     fi
     
     # 测试所有服务器
-    local total=${#DOH_SERVERS[@]}
     local success=0
     local reachable=0
     local failed=0
     local first_json=true
     local result_status
     
-    for server_info in "${DOH_SERVERS[@]}"; do
+    local servers=("${DOH_SERVERS[@]}")
+    if [[ -n "$DOH_ENDPOINT" ]]; then
+        servers=("custom|${DOH_ENDPOINT}|--|custom|custom")
+    fi
+    local total=${#servers[@]}
+    for server_info in "${servers[@]}"; do
         IFS='|' read -r name server country features provider <<< "$server_info"
         
         if [[ "$OUTPUT_FORMAT" == "json" ]]; then

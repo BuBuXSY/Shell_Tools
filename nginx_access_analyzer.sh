@@ -55,6 +55,8 @@ init_colors
 LOG_FILE="${LOG_FILE:-/var/log/nginx/access.log}"
 TOP_N="${TOP_N:-10}"
 MAX_LINES="${MAX_LINES:-50000}"
+WINDOW_MINUTES="${WINDOW_MINUTES:-0}"
+BUCKET_MINUTES="${BUCKET_MINUTES:-0}"
 WEBHOOK_URL="${WEBHOOK_URL:-${WECHAT_WEBHOOK_URL:-}}"
 
 WORK_DIR=""
@@ -74,6 +76,8 @@ usage() {
   LOG_FILE          📄 Nginx access.log 路径，默认 /var/log/nginx/access.log
   TOP_N             🔢 Top 列表数量，默认 10
   MAX_LINES         📚 最多分析最后多少行，默认 50000
+  WINDOW_MINUTES    🕒 仅分析最近 N 分钟（0 表示全部，默认 0）
+  BUCKET_MINUTES    🪣 按 N 分钟时间桶统计请求（0 表示关闭，默认 0）
   WEBHOOK_URL       📣 企业微信 webhook，可选
   WECHAT_WEBHOOK_URL 📣 企业微信 webhook，可选
 EOF
@@ -148,9 +152,12 @@ validate() {
         error "MAX_LINES 必须是大于 0 的数字"
         exit 2
     fi
+    for value in "$WINDOW_MINUTES" "$BUCKET_MINUTES"; do
+        [[ "$value" =~ ^[0-9]+$ ]] || { error "WINDOW_MINUTES 和 BUCKET_MINUTES 必须是非负整数"; exit 2; }
+    done
 
     local cmd
-    for cmd in tail awk sort head grep sed tee date tr; do
+    for cmd in tail awk sort head grep sed tee date tr perl; do
         if ! command -v "$cmd" >/dev/null 2>&1; then
             error "缺少必要命令：$cmd"
             exit 1
@@ -164,6 +171,12 @@ snapshot_log() {
         error "读取日志失败：$LOG_FILE"
         exit 1
     fi
+    if (( WINDOW_MINUTES > 0 )); then
+        local cutoff
+        cutoff=$(date -d "-${WINDOW_MINUTES} minutes" +%s 2>/dev/null) || { error "无法计算时间窗口"; exit 1; }
+        perl -MTime::Piece -e 'my $cutoff = shift; while (<>) { if (/\[([^]]+)\]/) { my $epoch = eval { Time::Piece->strptime($1, "%d/%b/%Y:%H:%M:%S %z")->epoch }; print if defined $epoch && $epoch >= $cutoff; } }' "$cutoff" "$SAMPLE_FILE" > "$SAMPLE_FILE.window" || { error "无法按时间窗口筛选日志"; exit 1; }
+        mv -- "$SAMPLE_FILE.window" "$SAMPLE_FILE"
+    fi
     SAMPLE_LINES=$(awk 'END {print NR + 0}' "$SAMPLE_FILE")
 }
 
@@ -172,7 +185,17 @@ show_overview() {
     info "📄 日志文件：$LOG_FILE"
     info "📚 分析范围：最后 $MAX_LINES 行"
     info "🧾 实际行数：$SAMPLE_LINES"
+    (( WINDOW_MINUTES > 0 )) && info "🕒 时间窗口：最近 ${WINDOW_MINUTES} 分钟"
+    (( BUCKET_MINUTES > 0 )) && info "🪣 时间桶：${BUCKET_MINUTES} 分钟"
     info "🕒 分析时间：$(date '+%F %T')"
+}
+
+show_time_buckets() {
+    (( BUCKET_MINUTES > 0 )) || return 0
+    section "时间桶请求量"
+    local output
+    output=$(perl -MTime::Piece -e 'my $minutes = shift; my %count; while (<>) { if (/\[([^]]+)\]/) { my $epoch = eval { Time::Piece->strptime($1, "%d/%b/%Y:%H:%M:%S %z")->epoch }; $count{int($epoch / ($minutes * 60)) * $minutes * 60}++ if defined $epoch; } } print "$_ $count{$_}\n" for sort { $a <=> $b } keys %count' "$BUCKET_MINUTES" "$SAMPLE_FILE" | while read -r bucket count; do printf "   %s %s 次\n" "$(date -d "@$bucket" '+%F %H:%M' 2>/dev/null || printf '%s' "$bucket")" "$count"; done)
+    [[ -n "$output" ]] && printf '%s\n' "$output" | tee -a "$REPORT_FILE" || warn "未解析到可用于时间桶的 Nginx 时间戳"
 }
 
 show_status_codes() {
@@ -310,6 +333,7 @@ main() {
         send_wechat
         return 0
     fi
+    show_time_buckets
     show_status_codes
     show_top_ips
     show_top_urls

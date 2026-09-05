@@ -4,6 +4,9 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+- Added configurable health thresholds, opt-in remote TLS inspection, Nginx time windows/buckets, and custom HTTPS DoH endpoints with bounded concurrency.
+- Expanded Bats coverage for safe validation paths.
+
 - Added a standalone, read-only `system_health_snapshot.sh` with text/JSON output, strict mode, and no-color behavior.
 - Added an optional NOC-style UI helper with documented `COLOR_MODE=auto|always|never` precedence (`always` forces ANSI; `auto` honors `NO_COLOR`, `TERM=dumb`, and non-TTY output) without becoming a runtime dependency.
 - Fixed DNS monitor default blacklist initialization so ShellCheck warning checks pass.

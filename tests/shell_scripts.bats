@@ -60,3 +60,20 @@ setup() {
     [ "$status" -eq 1 ]
     [[ "$output" == *"必须使用 https"* ]]
 }
+
+@test "remote TLS and DoH endpoint reject unsafe inputs without network access" {
+    run "$REPO_ROOT/ssl_cert_monitor.sh" --remote-host example.invalid --remote-port 0
+    [ "$status" -eq 2 ]
+    run "$REPO_ROOT/enhanced-doh-test.sh" --endpoint http://127.0.0.1/dns-query
+    [ "$status" -eq 2 ]
+    run "$REPO_ROOT/enhanced-doh-test.sh" --max-concurrency 33
+    [ "$status" -eq 2 ]
+}
+
+@test "nginx time window and bucket settings reject invalid values" {
+    tmp="$BATS_TEST_TMPDIR/access.log"; : > "$tmp"
+    run env LOG_FILE="$tmp" WINDOW_MINUTES=abc "$REPO_ROOT/nginx_access_analyzer.sh"
+    [ "$status" -eq 2 ]
+    run env LOG_FILE="$tmp" BUCKET_MINUTES=-1 "$REPO_ROOT/nginx_access_analyzer.sh"
+    [ "$status" -eq 2 ]
+}

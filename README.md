@@ -84,6 +84,7 @@ EXIT_ON_WARNING=1 ./server_security_audit.sh
 
 # 证书巡检；30 天内过期即告警
 WARN_DAYS=30 EXIT_ON_WARNING=1 ./ssl_cert_monitor.sh
+./ssl_cert_monitor.sh --remote-host example.invalid --remote-port 443
 
 # 服务器报告预览，不推送
 ./server_status_report.sh --dry-run
@@ -91,8 +92,10 @@ WARN_DAYS=30 EXIT_ON_WARNING=1 ./ssl_cert_monitor.sh
 # 只读系统健康快照；JSON stdout 可直接交给 jq
 ./system_health_snapshot.sh --format text
 ./system_health_snapshot.sh --format json | jq .
+./system_health_snapshot.sh --strict --load-warn 2 --memory-warn-percent 90 --disk-warn-percent 90 --inode-warn-percent 90
 
 LOG_FILE=/var/log/nginx/access.log TOP_N=20 ./nginx_access_analyzer.sh
+LOG_FILE=/var/log/nginx/access.log WINDOW_MINUTES=60 BUCKET_MINUTES=15 ./nginx_access_analyzer.sh
 ```
 
 ### 网络与 DNS 类
@@ -100,6 +103,7 @@ LOG_FILE=/var/log/nginx/access.log TOP_N=20 ./nginx_access_analyzer.sh
 ```bash
 # 测试 DoH 节点并输出机器可读 JSON
 ./enhanced-doh-test.sh -d example.com -t 5 -f json
+./enhanced-doh-test.sh --endpoint https://resolver.example.invalid/dns-query --max-concurrency 4
 
 # 分析高频 DNS 访问 IP，不执行推送
 ./search_ip.sh --log-file /var/log/nginx/access.log --no-push
