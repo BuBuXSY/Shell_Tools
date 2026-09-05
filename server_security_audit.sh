@@ -30,13 +30,23 @@
 
 set -euo pipefail
 
-RED="\e[31m"
-GREEN="\e[32m"
-YELLOW="\e[33m"
-BLUE="\e[34m"
-CYAN="\e[36m"
-BOLD="\e[1m"
-RESET="\e[0m"
+# Optional embedded UI; the script remains standalone when the shared library is absent.
+COLOR_MODE="${COLOR_MODE:-auto}"
+init_colors() {
+    local mode="$COLOR_MODE"
+    case "$mode" in auto|always|never) ;; *) mode=auto ;; esac
+    case "$mode" in
+        always) COLOR_ENABLED=1 ;;
+        auto)
+            if [[ -t 2 && -z "${NO_COLOR:-}" && "${TERM:-dumb}" != dumb ]]; then COLOR_ENABLED=1; else COLOR_ENABLED=0; fi
+            ;;
+        never) COLOR_ENABLED=0 ;;
+    esac
+    if [[ "$COLOR_ENABLED" == 1 ]]; then
+        GREEN=$'\033[32m'; YELLOW=$'\033[33m'; RED=$'\033[31m'; BLUE=$'\033[36m'; CYAN=$'\033[36m'; MAGENTA=$'\033[35m'; BOLD=$'\033[1m'; RESET=$'\033[0m'
+    else GREEN=; YELLOW=; RED=; BLUE=; CYAN=; MAGENTA=; BOLD=; RESET=; fi
+}
+init_colors
 
 WARNINGS=0
 CHECKS=0
@@ -54,34 +64,17 @@ usage() {
 EOF
 }
 
-print_banner() {
-    echo -e "${CYAN}"
-    echo "╔══════════════════════════════════════════════╗"
-    echo "║        🛡️  服务器安全巡检报告               ║"
-    echo "╚══════════════════════════════════════════════╝"
-    echo -e "${RESET}"
-}
-
-section() {
-    echo -e "\n${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-    echo -e "${BOLD}🔎 $1${RESET}"
-    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-}
-
-ok() {
-    CHECKS=$((CHECKS + 1))
-    echo -e "${GREEN}✅ $1${RESET}"
-}
-
-warn() {
-    CHECKS=$((CHECKS + 1))
-    WARNINGS=$((WARNINGS + 1))
-    echo -e "${YELLOW}⚠️  $1${RESET}"
-}
-
-info() {
-    echo -e "${BLUE}ℹ️  $1${RESET}"
-}
+print_banner() { printf '%b⚡ NOC // 服务器安全巡检%b
+' "$CYAN$BOLD" "$RESET"; }
+section() { printf '%b
+◆ %s%b
+' "$MAGENTA$BOLD" "$1" "$RESET"; }
+ok() { CHECKS=$((CHECKS + 1)); printf '%b[✓] %s%b
+' "$GREEN" "$1" "$RESET"; }
+warn() { CHECKS=$((CHECKS + 1)); WARNINGS=$((WARNINGS + 1)); printf '%b[!] %s%b
+' "$YELLOW" "$1" "$RESET"; }
+info() { printf '%b[ℹ] %s%b
+' "$BLUE" "$1" "$RESET"; }
 
 has_cmd() {
     command -v "$1" >/dev/null 2>&1

@@ -137,8 +137,8 @@ check_header() {
 check_style() {
     local file="$1"
 
-    grep -Eq '✅|⚠️|❌|ℹ️|🔧|📊|🚀|🛡️|🔐|💾|💽|🌏|🌉|🧪' "$file" || fail "缺少 emoji 输出或说明：$file"
-    grep -Eq 'GREEN|C_GREEN|RED|C_RED|YELLOW|C_YELLOW|CYAN|C_CYAN|NC=' "$file" || fail "缺少色彩输出变量：$file"
+    grep -Eq '✅|⚠️|❌|ℹ️|🔧|📊|🚀|🛡️|🔐|💾|💽|🌏|🌉|🧪|🩺' "$file" || fail "缺少 emoji 输出或说明：$file"
+    grep -Eq 'GREEN|C_GREEN|RED|C_RED|YELLOW|C_YELLOW|CYAN|C_CYAN|NC=|COLOR_MODE|st_ui_' "$file" || fail "缺少色彩输出变量：$file"
 }
 
 check_executable() {

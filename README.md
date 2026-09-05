@@ -25,6 +25,7 @@
 | `shell_tools_lint.sh` | 🧪 仓库脚本自检 | ShellCheck + userscript 冒烟测试 |
 | `ssl_cert_monitor.sh` | 🔐 SSL 证书有效期巡检 | GNU / BSD 日期兼容 |
 | `system_config_backup.sh` | 💾 系统关键配置备份 | 权限 `600`；SHA-256 校验 |
+| `system_health_snapshot.sh` | 🩺 系统健康快照 | 只读；text / JSON；可选严格模式 |
 | `update_Country.sh` | 🌏 更新 GeoIP Country.mmdb | 条件下载；原子替换 |
 | `update_frp.sh` | 🚇 安装、更新、卸载 FRP | OpenWrt / Linux；首装不启动 |
 | `Mactype助手增强版 (Edge优化)-1.0.0.user.js` | ✨ Edge 字体渲染增强 | Tampermonkey / Violentmonkey |
@@ -87,7 +88,10 @@ WARN_DAYS=30 EXIT_ON_WARNING=1 ./ssl_cert_monitor.sh
 # 服务器报告预览，不推送
 ./server_status_report.sh --dry-run
 
-# Nginx 访问日志分析
+# 只读系统健康快照；JSON stdout 可直接交给 jq
+./system_health_snapshot.sh --format text
+./system_health_snapshot.sh --format json | jq .
+
 LOG_FILE=/var/log/nginx/access.log TOP_N=20 ./nginx_access_analyzer.sh
 ```
 
@@ -103,6 +107,12 @@ LOG_FILE=/var/log/nginx/access.log TOP_N=20 ./nginx_access_analyzer.sh
 # 使用指定 mosdns 监控配置
 ./collect_repeat_dns.sh --config ./dns_monitor.conf
 ```
+
+## 🎨 控制台输出与机器可读结果
+
+新增工具使用低噪声 NOC 风格状态标签。`COLOR_MODE=auto`（默认）仅在 stderr 为 TTY、未设置 `NO_COLOR` 且 `TERM` 不是 `dumb` 时启用 ANSI；`COLOR_MODE=never`（或支持的工具的 `--no-color`）始终禁用 ANSI；`COLOR_MODE=always` 始终启用 ANSI，并优先于 `NO_COLOR` 与 `TERM=dumb`。机器可读的 JSON / CSV 始终仅写入 stdout；人类状态信息写入 stderr。
+
+公共 UI 辅助库仅为可选展示层：所有工具保留独立可下载运行能力，库缺失时会安全降级，不会阻止只读功能运行。
 
 ## ⚙️ 配置方式
 
@@ -195,6 +205,9 @@ sudo nginx -t -c /path/to/VPS_nginx_CDN_伪装网址.conf
 ```bash
 sudo apt-get install bats shellcheck
 ./shell_tools_lint.sh
+shellcheck --severity=warning ./*.sh lib/*.sh
+bats tests/*.bats
+node ./tests/userscript_smoke_test.js
 git diff --check
 ```
 

@@ -73,9 +73,7 @@ load_config() {
     : "${THRESHOLD:=$DEFAULT_THRESHOLD}"; : "${LOG_FILE:=$DEFAULT_LOG_FILE}"
     : "${HISTORY_FILE:=$DEFAULT_HISTORY_FILE}"; : "${MAX_LOG_SIZE:=$DEFAULT_MAX_LOG_SIZE}"
     : "${LOCK_FILE:=${DNS_MONITOR_LOCK_FILE:-/run/lock/collect_repeat_dns.lock}}"
-    BLACKLIST_DOMAINS=localhost
-BLACKLIST_DOMAINS=*.local
-BLACKLIST_DOMAINS=*.test
+    BLACKLIST_DOMAINS=(localhost '*.local' '*.test')
     if [[ -e "$CONFIG_FILE" ]]; then
         [[ -f "$CONFIG_FILE" && ! -L "$CONFIG_FILE" && -r "$CONFIG_FILE" ]] || { log_error "配置必须是可读的普通文件且不能是符号链接: $CONFIG_FILE"; exit 1; }
         local line key value lineno=0

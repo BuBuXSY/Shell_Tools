@@ -30,6 +30,24 @@
 
 set -u -o pipefail
 
+# Optional embedded UI; the script remains standalone when the shared library is absent.
+COLOR_MODE="${COLOR_MODE:-auto}"
+init_colors() {
+    local mode="$COLOR_MODE"
+    case "$mode" in auto|always|never) ;; *) mode=auto ;; esac
+    case "$mode" in
+        always) COLOR_ENABLED=1 ;;
+        auto)
+            if [[ -t 2 && -z "${NO_COLOR:-}" && "${TERM:-dumb}" != dumb ]]; then COLOR_ENABLED=1; else COLOR_ENABLED=0; fi
+            ;;
+        never) COLOR_ENABLED=0 ;;
+    esac
+    if [[ "$COLOR_ENABLED" == 1 ]]; then
+        GREEN=$'\033[32m'; YELLOW=$'\033[33m'; RED=$'\033[31m'; BLUE=$'\033[36m'; CYAN=$'\033[36m'; MAGENTA=$'\033[35m'; BOLD=$'\033[1m'; RESET=$'\033[0m'
+    else GREEN=; YELLOW=; RED=; BLUE=; CYAN=; MAGENTA=; BOLD=; RESET=; fi
+}
+init_colors
+
 # 配置变量
 TEST_DOMAIN="www.google.com"
 TIMEOUT=5
@@ -37,14 +55,8 @@ OUTPUT_FORMAT="table"
 DEBUG=false
 RUN_DIAGNOSIS=false
 
-# 颜色定义
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-PURPLE='\033[0;35m'
-CYAN='\033[0;36m'
-NC='\033[0m' # No Color
+PURPLE="$MAGENTA"
+NC="$RESET"
 
 TABLE_FORMAT="%-30s %-45s %-15s %-10s %-18s %-17s %-12s %s"
 
@@ -324,6 +336,8 @@ show_help() {
   -f, --format FORMAT    输出格式: table, json, csv (默认: table)
   --debug                调试模式
   --diagnosis            网络诊断
+  --no-color             禁用 ANSI 颜色
+  --color=MODE           auto、always 或 never
   -h, --help             显示帮助信息
 
 示例:
@@ -355,6 +369,8 @@ while [[ $# -gt 0 ]]; do
             TIMEOUT="$2"
             shift 2
             ;;
+        --no-color) COLOR_MODE=never; init_colors; PURPLE="$MAGENTA"; NC="$RESET"; shift ;;
+        --color=*) COLOR_MODE=${1#*=}; case "$COLOR_MODE" in auto|always|never) ;; *) echo "无效颜色模式: $COLOR_MODE" >&2; exit 2;; esac; init_colors; PURPLE="$MAGENTA"; NC="$RESET"; shift ;;
         -f|--format)
             if [[ $# -lt 2 || -z "${2:-}" ]]; then
                 echo "参数 $1 缺少输出格式" >&2
@@ -414,6 +430,7 @@ main() {
         info_fd=2
     fi
 
+    printf '%b⚡ NOC // 全面型 DoH 测试%b\n' "$CYAN$BOLD" "$RESET" >&$info_fd
     echo -e "${BLUE}===== 全面型 DoH 测试开始 =====${NC}" >&$info_fd
     echo "测试域名: $TEST_DOMAIN" >&$info_fd
     echo "超时时间: ${TIMEOUT}s" >&$info_fd

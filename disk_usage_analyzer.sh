@@ -30,13 +30,26 @@
 
 set -euo pipefail
 
-GREEN="\e[32m"
-YELLOW="\e[33m"
-RED="\e[31m"
-BLUE="\e[34m"
-CYAN="\e[36m"
-BOLD="\e[1m"
-RESET="\e[0m"
+# Optional, embedded color initialization: this script remains standalone.
+COLOR_MODE="${COLOR_MODE:-auto}"
+init_colors() {
+    local mode="$COLOR_MODE"
+    case "$mode" in auto|always|never) ;; *) mode=auto ;; esac
+    case "$mode" in
+        always) COLOR_ENABLED=1 ;;
+        auto)
+            if [[ -t 2 && -z "${NO_COLOR:-}" && "${TERM:-dumb}" != dumb ]]; then COLOR_ENABLED=1; else COLOR_ENABLED=0; fi
+            ;;
+        never) COLOR_ENABLED=0 ;;
+    esac
+    if [[ "$COLOR_ENABLED" == 1 ]]; then
+        GREEN=$'\033[32m'; YELLOW=$'\033[33m'; RED=$'\033[31m'; BLUE=$'\033[36m'; CYAN=$'\033[36m'; MAGENTA=$'\033[35m'; BOLD=$'\033[1m'; RESET=$'\033[0m'
+    else
+        GREEN=''; YELLOW=''; RED=''; BLUE=''; CYAN=''; MAGENTA=''; BOLD=''; RESET=''
+    fi
+}
+init_colors
+
 
 TARGETS="${TARGETS:-/ /var /home /opt /usr/local}"
 TOP_N="${TOP_N:-15}"
@@ -58,24 +71,12 @@ usage() {
 EOF
 }
 
-banner() {
-    echo -e "${CYAN}"
-    echo "╔══════════════════════════════════════════════╗"
-    echo "║        💽 磁盘空间分析                       ║"
-    echo "╚══════════════════════════════════════════════╝"
-    echo -e "${RESET}"
-}
-
-section() {
-    echo -e "\n${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-    echo -e "${BOLD}🔎 $1${RESET}"
-    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-}
-
-info() { echo -e "${BLUE}ℹ️  $1${RESET}"; }
-ok() { echo -e "${GREEN}✅ $1${RESET}"; }
-warn() { echo -e "${YELLOW}⚠️  $1${RESET}"; }
-error() { echo -e "${RED}❌ $1${RESET}"; }
+banner() { printf '%b⚡ NOC // 磁盘空间分析%b\n' "$CYAN$BOLD" "$RESET"; }
+section() { printf '%b\n◆ %s%b\n' "$MAGENTA$BOLD" "$1" "$RESET"; }
+info() { printf '%b[ℹ] %s%b\n' "$BLUE" "$1" "$RESET"; }
+ok() { printf '%b[✓] %s%b\n' "$GREEN" "$1" "$RESET"; }
+warn() { printf '%b[!] %s%b\n' "$YELLOW" "$1" "$RESET"; }
+error() { printf '%b[×] %s%b\n' "$RED" "$1" "$RESET" >&2; }
 
 has_cmd() {
     command -v "$1" >/dev/null 2>&1

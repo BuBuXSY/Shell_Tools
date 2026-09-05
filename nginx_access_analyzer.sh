@@ -31,13 +31,26 @@
 set -euo pipefail
 umask 077
 
-GREEN="\e[32m"
-YELLOW="\e[33m"
-RED="\e[31m"
-BLUE="\e[34m"
-CYAN="\e[36m"
-BOLD="\e[1m"
-RESET="\e[0m"
+# Optional, embedded color initialization: this script remains standalone.
+COLOR_MODE="${COLOR_MODE:-auto}"
+init_colors() {
+    local mode="$COLOR_MODE"
+    case "$mode" in auto|always|never) ;; *) mode=auto ;; esac
+    case "$mode" in
+        always) COLOR_ENABLED=1 ;;
+        auto)
+            if [[ -t 2 && -z "${NO_COLOR:-}" && "${TERM:-dumb}" != dumb ]]; then COLOR_ENABLED=1; else COLOR_ENABLED=0; fi
+            ;;
+        never) COLOR_ENABLED=0 ;;
+    esac
+    if [[ "$COLOR_ENABLED" == 1 ]]; then
+        CYAN=$'\033[36m'; MAGENTA=$'\033[35m'; BOLD=$'\033[1m'; RESET=$'\033[0m'
+    else
+        CYAN=''; MAGENTA=''; BOLD=''; RESET=''
+    fi
+}
+init_colors
+
 
 LOG_FILE="${LOG_FILE:-/var/log/nginx/access.log}"
 TOP_N="${TOP_N:-10}"
@@ -66,35 +79,20 @@ usage() {
 EOF
 }
 
-banner() {
-    echo -e "${CYAN}"
-    echo "╔══════════════════════════════════════════════╗"
-    echo "║        📊 Nginx 访问日志分析                 ║"
-    echo "╚══════════════════════════════════════════════╝"
-    echo -e "${RESET}"
-}
-
-section() {
-    echo -e "\n${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}" | tee -a "$REPORT_FILE"
-    echo -e "${BOLD}🔎 $1${RESET}" | tee -a "$REPORT_FILE"
-    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}" | tee -a "$REPORT_FILE"
-}
-
-info() {
-    echo -e "${BLUE}ℹ️  $1${RESET}" | tee -a "$REPORT_FILE"
-}
-
-ok() {
-    echo -e "${GREEN}✅ $1${RESET}" | tee -a "$REPORT_FILE"
-}
-
-warn() {
-    echo -e "${YELLOW}⚠️  $1${RESET}" | tee -a "$REPORT_FILE"
-}
-
-error() {
-    echo -e "${RED}❌ $1${RESET}" | tee -a "$REPORT_FILE"
-}
+banner() { printf '%b⚡ NOC // Nginx 访问日志分析%b
+' "$CYAN$BOLD" "$RESET"; }
+section() { printf '
+◆ %s
+' "$1" | tee -a "$REPORT_FILE"; printf '%b◆ %s%b
+' "$MAGENTA$BOLD" "$1" "$RESET" >&2; }
+info() { printf '[ℹ] %s
+' "$1" | tee -a "$REPORT_FILE"; }
+ok() { printf '[✓] %s
+' "$1" | tee -a "$REPORT_FILE"; }
+warn() { printf '[!] %s
+' "$1" | tee -a "$REPORT_FILE"; }
+error() { printf '[×] %s
+' "$1" | tee -a "$REPORT_FILE" >&2; }
 
 cleanup() {
     [[ -n "$WORK_DIR" && -d "$WORK_DIR" ]] && rm -rf -- "$WORK_DIR"

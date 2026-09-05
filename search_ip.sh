@@ -31,16 +31,28 @@
 set -euo pipefail
 
 # ===== 🎨 色彩输出 =====
-GREEN="\e[32m"
-YELLOW="\e[33m"
-RED="\e[31m"
-BLUE="\e[34m"
-RESET="\e[0m"
+# Optional embedded UI; the script remains standalone when the shared library is absent.
+COLOR_MODE="${COLOR_MODE:-auto}"
+init_colors() {
+    local mode="$COLOR_MODE"
+    case "$mode" in auto|always|never) ;; *) mode=auto ;; esac
+    case "$mode" in
+        always) COLOR_ENABLED=1 ;;
+        auto)
+            if [[ -t 2 && -z "${NO_COLOR:-}" && "${TERM:-dumb}" != dumb ]]; then COLOR_ENABLED=1; else COLOR_ENABLED=0; fi
+            ;;
+        never) COLOR_ENABLED=0 ;;
+    esac
+    if [[ "$COLOR_ENABLED" == 1 ]]; then
+        GREEN=$'\033[32m'; YELLOW=$'\033[33m'; RED=$'\033[31m'; BLUE=$'\033[36m'; RESET=$'\033[0m'
+    else GREEN=''; YELLOW=''; RED=''; BLUE=''; RESET=''; fi
+}
+init_colors
 
-log_info() { echo -e "${BLUE}ℹ️  $1${RESET}"; }
-log_ok() { echo -e "${GREEN}✅ $1${RESET}"; }
-log_warn() { echo -e "${YELLOW}⚠️  $1${RESET}"; }
-log_error() { echo -e "${RED}❌ $1${RESET}"; }
+log_info() { printf '%b[ℹ] %s%b\n' "$BLUE" "$1" "$RESET"; }
+log_ok() { printf '%b[✓] %s%b\n' "$GREEN" "$1" "$RESET"; }
+log_warn() { printf '%b[!] %s%b\n' "$YELLOW" "$1" "$RESET"; }
+log_error() { printf '%b[×] %s%b\n' "$RED" "$1" "$RESET" >&2; }
 
 file_path="${NGINX_LOG_FILE:-/var/log/nginx/access.log}"
 webhook_url="${WEBHOOK_URL:-${WECHAT_WEBHOOK_URL:-}}"

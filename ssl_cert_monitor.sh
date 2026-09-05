@@ -30,12 +30,23 @@
 
 set -euo pipefail
 
-GREEN="\e[32m"
-YELLOW="\e[33m"
-RED="\e[31m"
-BLUE="\e[34m"
-CYAN="\e[36m"
-RESET="\e[0m"
+# Optional embedded UI; the script remains standalone when the shared library is absent.
+COLOR_MODE="${COLOR_MODE:-auto}"
+init_colors() {
+    local mode="$COLOR_MODE"
+    case "$mode" in auto|always|never) ;; *) mode=auto ;; esac
+    case "$mode" in
+        always) COLOR_ENABLED=1 ;;
+        auto)
+            if [[ -t 2 && -z "${NO_COLOR:-}" && "${TERM:-dumb}" != dumb ]]; then COLOR_ENABLED=1; else COLOR_ENABLED=0; fi
+            ;;
+        never) COLOR_ENABLED=0 ;;
+    esac
+    if [[ "$COLOR_ENABLED" == 1 ]]; then
+        GREEN=$'\033[32m'; YELLOW=$'\033[33m'; RED=$'\033[31m'; BLUE=$'\033[36m'; CYAN=$'\033[36m'; BOLD=$'\033[1m'; RESET=$'\033[0m'
+    else GREEN=''; YELLOW=''; RED=''; BLUE=''; CYAN=''; BOLD=''; RESET=''; fi
+}
+init_colors
 
 WARN_DAYS="${WARN_DAYS:-15}"
 CERT_DIRS="${CERT_DIRS:-/etc/nginx/ssl /etc/nginx/cert_file /etc/letsencrypt/live /etc/x-ui}"
@@ -74,29 +85,16 @@ has_cmd() {
     command -v "$1" >/dev/null 2>&1
 }
 
-banner() {
-    echo -e "${CYAN}"
-    echo "╔══════════════════════════════════════════════╗"
-    echo "║        🔐 SSL 证书有效期巡检                 ║"
-    echo "╚══════════════════════════════════════════════╝"
-    echo -e "${RESET}"
-}
-
-log_info() {
-    echo -e "${BLUE}ℹ️  $1${RESET}"
-}
-
-log_ok() {
-    echo -e "${GREEN}✅ $1${RESET}"
-}
-
-log_warn() {
-    echo -e "${YELLOW}⚠️  $1${RESET}"
-}
-
-log_error() {
-    echo -e "${RED}❌ $1${RESET}"
-}
+banner() { printf '%b⚡ NOC // SSL 证书有效期巡检%b
+' "$CYAN$BOLD" "$RESET"; }
+log_info() { printf '%b[ℹ] %s%b
+' "$BLUE" "$1" "$RESET"; }
+log_ok() { printf '%b[✓] %s%b
+' "$GREEN" "$1" "$RESET"; }
+log_warn() { printf '%b[!] %s%b
+' "$YELLOW" "$1" "$RESET"; }
+log_error() { printf '%b[×] %s%b
+' "$RED" "$1" "$RESET" >&2; }
 
 add_report_line() {
     REPORT_LINES+=("$1")
