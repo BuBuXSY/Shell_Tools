@@ -56,6 +56,7 @@ function createHarness({edge = false, savedConfig = null, inlineElements = []} =
     const window = {
         devicePixelRatio: 1,
         alert() {},
+        location: {reload() {}},
         addEventListener(type, callback) {
             windowListeners.set(type, callback);
         }
@@ -89,8 +90,8 @@ function createHarness({edge = false, savedConfig = null, inlineElements = []} =
                 : 'Mozilla/5.0 Chrome/130.0.0.0'
         },
         window,
-        GM_getValue(name) {
-            return store.get(name);
+        GM_getValue(name, defaultValue) {
+            return store.has(name) ? store.get(name) : defaultValue;
         },
         GM_setValue(name, value) {
             store.set(name, value);
@@ -124,6 +125,9 @@ function createHarness({edge = false, savedConfig = null, inlineElements = []} =
         },
         getStyleWrites() {
             return styleWrites;
+        },
+        getSavedValue(name) {
+            return store.get(name);
         }
     };
 }

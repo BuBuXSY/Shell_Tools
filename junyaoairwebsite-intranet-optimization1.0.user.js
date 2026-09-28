@@ -1,14 +1,16 @@
 // ==UserScript==
 // @name         🛫 吉祥航空内网字体优化
 // @namespace    http://tampermonkey.net/
-// @version      1.1.0
-// @date         2026-07-11
+// @version      1.2.0
+// @date         2026-09-29
 // @description  ✨ 优化吉祥航空内部系统的字体显示
 // @author       BuBuXSY
 // @match        https://cabinternal.juneyaoair.com/*
 // @match        http://cabinternal.juneyaoair.com/*
 // @match        *://*.juneyaoair.com/*
-// @grant        none
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        GM_registerMenuCommand
 // @run-at       document-start
 // ==/UserScript==
 
@@ -16,6 +18,14 @@
     'use strict';
 
     const STYLE_ID = 'junyao-font-optimization-style';
+    const ENABLED_KEY = 'junyao_font_optimization_enabled';
+    const enabled = GM_getValue(ENABLED_KEY, true);
+
+    GM_registerMenuCommand(enabled ? '暂停字体优化' : '启用字体优化', () => {
+        GM_setValue(ENABLED_KEY, !enabled);
+        window.location.reload();
+    });
+    if (!enabled) return;
 
     // 创建并插入样式
     const style = document.createElement('style');

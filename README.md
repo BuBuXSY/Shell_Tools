@@ -3,7 +3,7 @@
 > 🎯 集中管理 Linux 运维、网络诊断、Nginx、SSL、FRP、GeoIP 与浏览器字体优化工具。
 
 [![Shell Tools Lint](https://github.com/BuBuXSY/Shell_Tools/actions/workflows/shell-tools-lint.yml/badge.svg)](https://github.com/BuBuXSY/Shell_Tools/actions/workflows/shell-tools-lint.yml)
-[![Tools](https://img.shields.io/badge/工具数量-18-blue.svg)](README.md)
+[![Tools](https://img.shields.io/badge/工具数量-19-blue.svg)](README.md)
 [![Platform](https://img.shields.io/badge/平台-Linux%20%7C%20OpenWrt%20%7C%20Edge-green.svg)](README.md)
 [![License](https://img.shields.io/badge/许可证-MIT-orange.svg)](LICENSE)
 [![Security Policy](https://img.shields.io/badge/security-policy-brightgreen.svg)](SECURITY.md)
@@ -12,6 +12,7 @@
 
 | 🔧 文件 | 🎯 用途 | ⚠️ 运行特性 |
 | --- | --- | --- |
+| `shell_tools.sh` | 🧰 统一交互式工具台 | 16 个 Shell 工具分类、参数预览、修改确认 |
 | `Auto_Upgrade_Nginx.sh` | 🌐 源码编译安装 / 升级 Nginx | root；官方验签；失败事务回滚 |
 | `collect_repeat_dns.sh` | 🧠 分析 mosdns 重复查询域名 | 纯文本配置；原子更新规则；单实例锁；不清空源日志 |
 | `disk_usage_analyzer.sh` | 💽 磁盘空间占用分析 | 只读；支持多目录 |
@@ -39,6 +40,14 @@ git clone https://github.com/BuBuXSY/Shell_Tools.git
 cd Shell_Tools
 chmod +x ./*.sh
 ./shell_tools_lint.sh
+```
+
+交互式工具台会按系统、网络和只读巡检分类展示所有 Shell 脚本；有修改作用的命令会显示预览并要求确认：
+
+```bash
+./shell_tools.sh
+./shell_tools.sh --list
+./shell_tools.sh --run system_health_snapshot.sh -- --format json
 ```
 
 查看任一脚本的参数：
@@ -203,6 +212,7 @@ sudo nginx -t -c /path/to/VPS_nginx_CDN_伪装网址.conf
 - Edge 首次运行和快捷预设未打开设置面板时的空节点访问。
 - DPI 变化检测、字间距关闭后的无效 CSS，以及关闭设置时恢复未保存预览。
 - 吉祥航空页面内联字体权重检查由全 DOM 扫描收窄为仅扫描含 `style` 的元素。
+- 吉祥航空字体脚本增加 Tampermonkey 菜单开关，状态持久化保存，暂停后不注入样式并自动刷新页面。
 
 ## 🧪 开发与验证
 

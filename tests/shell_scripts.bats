@@ -56,7 +56,7 @@ setup() {
     tmp="$(mktemp -d)"
     trap 'rm -rf "$tmp"' EXIT
     printf '%s\n' '127.0.0.1 dns.example GET / 200' > "$tmp/access.log"
-    run env NGINX_LOG_FILE="$tmp/access.log" WEBHOOK_URL="http://127.0.0.1/hook" "$REPO_ROOT/nginx_access_analyzer.sh"
+    run env LOG_FILE="$tmp/access.log" WEBHOOK_URL="http://127.0.0.1/hook" "$REPO_ROOT/nginx_access_analyzer.sh"
     [ "$status" -eq 1 ]
     [[ "$output" == *"必须使用 https"* ]]
 }
