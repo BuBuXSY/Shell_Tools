@@ -62,6 +62,35 @@ ACME_SH_VERSION="${ACME_SH_VERSION:-3.1.3}"
 ACME_SH_SHA256="${ACME_SH_SHA256:-}"
 NGINX_RELOAD_MODE=""
 
+# Verify that the running Nginx configuration uses the files acme.sh just
+# installed.  A successful acme.sh install/reload alone is not sufficient:
+# Nginx may still point at an older certificate path.
+verify_nginx_certificate_deployment() {
+    local cert_file="$1"
+    local key_file="$2"
+    local nginx_config
+
+    if ! command -v nginx >/dev/null 2>&1; then
+        log "WARN" "未找到 nginx，跳过活动配置证书路径校验"
+        return 0
+    fi
+
+    if ! nginx_config=$(nginx -T 2>&1); then
+        error_exit "无法读取 Nginx 活动配置，证书已写入但未确认生效"
+    fi
+
+    if ! grep -Fq "ssl_certificate $cert_file" <<< "$nginx_config" \
+        || ! grep -Fq "ssl_certificate_key $key_file" <<< "$nginx_config"; then
+        log "ERROR" "Nginx 活动配置没有引用刚部署的证书"
+        log "INFO" "期望证书: $cert_file"
+        log "INFO" "期望私钥: $key_file"
+        log "INFO" "请将 ssl_certificate 和 ssl_certificate_key 指向上述文件后重新 reload"
+        return 1
+    fi
+
+    log "SUCCESS" "Nginx 活动配置已引用新证书"
+}
+
 show_help() {
     cat <<EOF
 SSL 证书自动化管理工具
@@ -1057,6 +1086,8 @@ install_certificate() {
         chmod 0644 "$cert_file" "$fullchain_file" || error_exit "无法设置证书文件权限"
         chmod 0600 "$key_file" || error_exit "无法设置私钥权限"
         [[ "$(stat -c '%a' "$key_file" 2>/dev/null || stat -f '%Lp' "$key_file")" == 600 ]] || error_exit "私钥权限验证失败"
+        verify_nginx_certificate_deployment "$fullchain_file" "$key_file" \
+            || error_exit "证书已部署，但 Nginx 仍未使用该证书"
         log "SUCCESS" "证书安装成功"
         log "INFO" "证书文件位置: $cert_file"
         log "INFO" "私钥文件位置: $key_file"
@@ -1198,7 +1229,12 @@ main() {
         "issue")
             issue_certificate
             install_certificate
-            setup_auto_renewal
+            if [[ "$DNS_METHOD" == "api" ]]; then
+                setup_auto_renewal
+            else
+                log "WARN" "手动 DNS 验证不能可靠自动续期，未安装 acme.sh 自动续期任务"
+                log "INFO" "如需无人值守续期，请重新申请并选择 DNS API"
+            fi
             ;;
         "renew")
             renew_certificate
