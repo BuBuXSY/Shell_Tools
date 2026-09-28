@@ -8,12 +8,16 @@ setup() {
     local script
     for script in "$REPO_ROOT"/*.sh; do
         run timeout 5s "$script" --help
+        if [ "$status" -ne 0 ]; then
+            printf 'help failed: %s status=%s output=%s\n' "$script" "$status" "$output" >&2
+        fi
         [ "$status" -eq 0 ]
     done
 }
 
 @test "invalid arguments return the documented usage status" {
     run "$REPO_ROOT/kernel_optimization.sh" --scene not-a-scene
+    [ "$status" -eq 2 ] || printf 'kernel invalid scene status=%s output=%s\n' "$status" "$output" >&2
     [ "$status" -eq 2 ]
     [[ "$output" == *"无效场景"* ]]
 
@@ -36,6 +40,7 @@ setup() {
     [[ "$output" == *"缓存有效期"* ]]
 
     run "$REPO_ROOT/enhanced-doh-test.sh" --format unsupported
+    [ "$status" -eq 2 ] || printf 'doh invalid format status=%s output=%s\n' "$status" "$output" >&2
     [ "$status" -eq 2 ]
     [[ "$output" == *"无效输出格式"* ]]
 }

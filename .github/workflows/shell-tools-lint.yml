@@ -39,7 +39,9 @@ jobs:
           echo "$(brew --prefix coreutils)/libexec/gnubin" >> "$GITHUB_PATH"
 
       - name: 🧪 Run repository self check
-        run: ./shell_tools_lint.sh
+        run: |
+          bash --version | head -1
+          ./shell_tools_lint.sh
 
       - name: 🔎 Check diff whitespace
         run: git diff --check
