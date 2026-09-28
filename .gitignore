@@ -17,3 +17,6 @@ cache/
 
 # 🐚 Shell 检查工具缓存
 .shellcheckrc.local
+
+# 🤖 本地 Agent / Claude worktrees
+.claude/
