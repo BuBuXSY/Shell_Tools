@@ -3,7 +3,7 @@
 > 🎯 集中管理 Linux、macOS、OpenWrt 运维、网络诊断、Nginx、SSL、FRP、GeoIP 与浏览器字体工具。
 
 [![Shell Tools Lint](https://github.com/BuBuXSY/Shell_Tools/actions/workflows/shell-tools-lint.yml/badge.svg)](https://github.com/BuBuXSY/Shell_Tools/actions/workflows/shell-tools-lint.yml)
-[![Tools](https://img.shields.io/badge/工具数量-19-blue.svg)](README.md)
+[![Tools](https://img.shields.io/badge/工具数量-20-blue.svg)](README.md)
 [![Platform](https://img.shields.io/badge/平台-Linux%20%7C%20macOS%20%7C%20OpenWrt-green.svg)](README.md)
 [![License](https://img.shields.io/badge/许可证-MIT-orange.svg)](LICENSE)
 [![Security Policy](https://img.shields.io/badge/security-policy-brightgreen.svg)](SECURITY.md)
@@ -28,6 +28,7 @@
 | `system_config_backup.sh` | 💾 系统关键配置备份 | 权限 `600`；SHA-256 校验 |
 | `system_health_snapshot.sh` | 🩺 系统健康快照 | 只读；text / JSON；可选严格模式 |
 | `platform_check.sh` | 🧭 平台适配检查 | 识别 Linux / macOS / OpenWrt、包管理器与服务管理器 |
+| `cleanup_junk.sh` | 🧹 垃圾缓存清理 | 默认预览；按天数/大小清理；交互写入或移除 cron |
 | `update_Country.sh` | 🌏 更新 GeoIP Country.mmdb | 条件下载；原子替换 |
 | `update_frp.sh` | 🚇 安装、更新、卸载 FRP | OpenWrt / Linux；首装不启动 |
 | `Mactype助手增强版 (Edge优化)-1.0.0.user.js` | ✨ Edge 字体渲染增强 | Tampermonkey / Violentmonkey |
@@ -47,6 +48,7 @@ cd Shell_Tools
 chmod +x ./*.sh
 ./shell_tools_lint.sh
 ./platform_check.sh
+./cleanup_junk.sh
 ```
 
 交互式工具台会按系统、网络和只读巡检分类展示所有 Shell 脚本；有修改作用的命令会显示预览并要求确认：
@@ -89,7 +91,11 @@ chmod +x ./*.sh
 ./system_config_backup.sh --plan
 ./update_frp.sh --action install --role frpc --plan
 ./update_Country.sh --status
+./cleanup_junk.sh --interactive
+./cleanup_junk.sh --run --yes --days 14 --max-size 200M
 ```
+
+`cleanup_junk.sh` 的默认行为是预览，不删除文件。它只处理超过保留天数和大小阈值、且文件名属于临时/缓存/旧日志类别的文件；每轮同时限制最大文件数和总字节数。`--interactive` 可选择每天、每周或每月写入 cron，也可以用 `--remove-cron` 移除本工具写入的任务。
 
 分析脚本支持直接参数和交互模式：
 
@@ -305,6 +311,7 @@ GitHub Actions 会安装 Bats 与 ShellCheck 后执行同一套检查。未安�
 - `ssl_cert_monitor.sh` 兼容 GNU 与 BSD 风格 `date`，证书搜索按平台选择 `find -xdev` 或 BSD 可用参数。
 - `disk_usage_analyzer.sh` 提供 GNU `find -printf` 的 `wc` 回退；`server_status_report.sh` 提供 Linux `/sys` 和 macOS 路由/内存回退。
 - `kernel_optimization.sh`、`Auto_Upgrade_Nginx.sh`、`install_cert.sh`、`update_Country.sh` 的写入路径面向 Linux；在 macOS/OpenWrt 会先拒绝并给出平台替代方案。
+- `cleanup_junk.sh` 在三类平台都优先使用安全预览；Linux/OpenWrt/macOS 均可通过 cron 运行，默认受保护目录和符号链接会被跳过。
 - `search_ip.sh` 如需显示 IP 归属地，建议安装 `nali`；不安装时仍输出频次分析。
 
 ## 📜 License

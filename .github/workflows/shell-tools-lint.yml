@@ -34,7 +34,8 @@ jobs:
       - name: 📦 Install macOS test dependencies
         if: runner.os == 'macOS'
         run: |
-          brew install bats shellcheck coreutils
+          brew install bash bats shellcheck coreutils
+          echo "$(brew --prefix bash)/bin" >> "$GITHUB_PATH"
           echo "$(brew --prefix coreutils)/libexec/gnubin" >> "$GITHUB_PATH"
 
       - name: 🧪 Run repository self check

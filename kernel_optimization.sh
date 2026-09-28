@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # ====================================================
 # MIT License
 #
@@ -42,6 +42,20 @@
 set -uo pipefail
 
 if (( BASH_VERSINFO[0] < 4 )); then
+    case "${1:-}" in
+        --help|-h)
+            printf '用法：%s [--scene vps|vps_low|bypass|router|sbc|baremetal] [--plan]\n' "$0"
+            printf '此平台仅支持帮助和预览；实际 Linux 内核调优需要 bash 4.0+。\n'
+            exit 0
+            ;;
+        --scene)
+            [[ "${2:-}" =~ ^(vps|vps_low|bypass|router|sbc|baremetal)$ ]] || { echo "❌ 无效场景: ${2:-}" >&2; exit 2; }
+            ;;
+        --plan)
+            printf '内核优化预览\nLinux 内核写入操作需要 bash 4.0+；macOS/OpenWrt 请使用平台原生网络配置。\n'
+            exit 0
+            ;;
+    esac
     echo "❌ 此脚本需要 bash 4.0+（当前: $BASH_VERSION）"
     echo "   macOS 用户：brew install bash"
     exit 1

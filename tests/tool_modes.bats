@@ -59,3 +59,30 @@ setup() {
     [ "$status" -eq 0 ]
     printf '%s' "$output" | node -e 'let input="";process.stdin.on("data",x=>input+=x);process.stdin.on("end",()=>{const data=JSON.parse(input);if(!data.os||!data.arch)process.exit(1)})'
 }
+
+@test "cleanup tool previews safely and rejects protected paths" {
+    run "$REPO_ROOT/cleanup_junk.sh" --plan --paths "$BATS_TEST_TMPDIR" --days 30 --max-size 1M
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"垃圾清理预览"* ]]
+    run "$REPO_ROOT/cleanup_junk.sh" --plan --paths / --days 30 --max-size 1M
+    [ "$status" -ne 0 ]
+}
+
+@test "cleanup applies file and byte limits to disposable test files" {
+    temp_dir="$BATS_TEST_TMPDIR/junk"
+    mkdir -p "$temp_dir"
+    dd if=/dev/zero of="$temp_dir/one.cache" bs=1024 count=2 2>/dev/null
+    dd if=/dev/zero of="$temp_dir/two.cache" bs=1024 count=2 2>/dev/null
+    touch -t 202001010000 "$temp_dir/one.cache" "$temp_dir/two.cache"
+    run "$REPO_ROOT/cleanup_junk.sh" --run --yes --paths "$temp_dir" --days 1 \
+        --max-size 1 --max-total 2K --max-files 1
+    [ "$status" -eq 0 ]
+    [ "$(find "$temp_dir" -type f | wc -l | tr -d ' ')" -eq 1 ]
+}
+
+@test "cleanup cron rejects unsafe schedules" {
+    run "$REPO_ROOT/cleanup_junk.sh" --install-cron --paths "$BATS_TEST_TMPDIR" \
+        --schedule '0 3 * * *; touch /tmp/unsafe'
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"cron 表达式"* ]]
+}
