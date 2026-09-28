@@ -234,7 +234,7 @@ MOSDNS 重复域名监控辅助脚本
 用法: $0 [选项]
 
 选项:
-  -c, --config FILE    指定配置文件（默认: $CONFIG_FILE）
+  -c, --config FILE    指定配置文件（默认: ${CONFIG_FILE}）
       --plan           只读显示配置、日志和报告路径
   -h, --help           显示帮助信息
 

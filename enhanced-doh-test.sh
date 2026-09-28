@@ -434,7 +434,7 @@ fi
 case "$OUTPUT_FORMAT" in
     table|json|csv) ;;
     *)
-        echo "无效输出格式: $OUTPUT_FORMAT（支持 table、json、csv）" >&2
+        echo "无效输出格式: ${OUTPUT_FORMAT}（支持 table、json、csv）" >&2
         exit 2
         ;;
 esac
