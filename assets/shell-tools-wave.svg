@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 180" role="img" aria-label="Shell Tools animated terminal wave">
+  <defs>
+    <linearGradient id="g" x1="0" x2="1">
+      <stop offset="0" stop-color="#22d3ee"/><stop offset="0.5" stop-color="#a78bfa"/><stop offset="1" stop-color="#34d399"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="180" rx="24" fill="#07111f"/>
+  <path d="M0 120 C180 50 300 170 480 100 S780 45 960 105 S1110 150 1200 85" fill="none" stroke="url(#g)" stroke-width="5" opacity=".9">
+    <animate attributeName="d" dur="6s" repeatCount="indefinite" values="M0 120 C180 50 300 170 480 100 S780 45 960 105 S1110 150 1200 85;M0 95 C180 155 300 40 480 115 S780 160 960 75 S1110 45 1200 115;M0 120 C180 50 300 170 480 100 S780 45 960 105 S1110 150 1200 85"/>
+  </path>
+  <text x="55" y="68" fill="#e2e8f0" font-family="ui-monospace,monospace" font-size="30" font-weight="700">$ ./shell_tools.sh</text>
+  <text x="58" y="145" fill="#94a3b8" font-family="ui-monospace,monospace" font-size="18">Linux · macOS · OpenWrt  //  inspect · protect · automate</text>
+</svg>

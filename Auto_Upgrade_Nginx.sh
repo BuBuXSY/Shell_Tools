@@ -51,6 +51,7 @@ CPU_CORES=$(nproc 2>/dev/null || echo 1)
 KTLS_SUPPORTED=0                       # 默认关闭，preflight 中按内核版本覆盖
 VERSION_CHANNEL=""
 ASSUME_YES=0
+PLAN_ONLY=0
 LAST_BINARY_BACKUP=""
 LAST_NGINX_CONF_BACKUP=""
 LAST_SYSTEMD_UNIT_BACKUP=""
@@ -79,10 +80,11 @@ ZLIB_SHA256="9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23"
 # =========================
 usage() {
     cat <<EOF
-用法: $0 [--channel mainline|stable] [--yes] [--help]
+用法: $0 [--channel mainline|stable] [--plan] [--yes] [--help]
 
   --channel  直接选择主线版或稳定版，省略时交互选择
   --yes      跳过安装确认（适合自动化执行）
+  --plan     只显示当前版本、目标通道和变更范围
   --help     显示帮助
 EOF
 }
@@ -99,6 +101,7 @@ parse_args() {
                 shift 2
                 ;;
             --yes|-y) ASSUME_YES=1; shift ;;
+            --plan) PLAN_ONLY=1; shift ;;
             --help|-h) usage; exit 0 ;;
             *) echo "❌ 未知参数: $1" >&2; usage >&2; exit 2 ;;
         esac
@@ -1197,6 +1200,19 @@ trap cleanup EXIT
 main() {
     parse_args "$@"
 
+    if [[ "$PLAN_ONLY" -eq 1 ]]; then
+        printf 'Nginx 升级预览\n当前版本: '
+        if command -v nginx >/dev/null 2>&1; then nginx -v 2>&1; else printf '未安装\n'; fi
+        printf '目标通道: %s\n' "${VERSION_CHANNEL:-交互选择}"
+        printf '变更范围: Nginx 二进制、配置、systemd 服务；执行前会备份并验证，失败时回滚。\n'
+        return 0
+    fi
+
+    if [[ "$(uname -s)" != Linux || -f /etc/openwrt_release ]]; then
+        printf '❌ 当前源码安装流程面向常规 Linux 发行版；macOS 请使用 brew install nginx，OpenWrt 请使用 opkg install nginx。\n' >&2
+        return 1
+    fi
+
     echo -e "\n${C_CYAN}╔══════════════════════════════════════════════╗${C_RESET}"
     echo -e "${C_CYAN}║${C_GREEN}   🌉 Nginx 编译安装脚本 v2.1                 ${C_CYAN}║${C_RESET}"
     echo -e "${C_CYAN}║${C_RESET}   By BuBuXSY | License: MIT                  ${C_CYAN}║${C_RESET}"
@@ -1242,12 +1258,12 @@ main() {
         print_msg WARN "⚠️  当前已是最新版本 $target_version"
         if [[ "$ASSUME_YES" -ne 1 ]]; then
             read -rp "$(echo -e "${C_YELLOW}❓ 是否仍要重新编译安装？[y/N]：${C_RESET}")" confirm || confirm=""
-            [[ "${confirm,,}" != "y" ]] && { print_msg INFO "已取消，退出 👋"; exit 0; }
+            [[ "$(printf '%s' "$confirm" | tr '[:upper:]' '[:lower:]')" != "y" ]] && { print_msg INFO "已取消，退出 👋"; exit 0; }
         fi
     else
         if [[ "$ASSUME_YES" -ne 1 ]]; then
             read -rp "$(echo -e "${C_YELLOW}❓ 确认安装 ${target_version}？[Y/n]：${C_RESET}")" confirm || confirm=""
-            case "${confirm,,}" in
+            case "$(printf '%s' "$confirm" | tr '[:upper:]' '[:lower:]')" in
                 ""|y|yes) ;;
                 n|no) print_msg INFO "已取消，退出 👋"; exit 0 ;;
                 *) print_msg ERROR "无效确认输入，请输入 y 或 n"; exit 2 ;;

@@ -40,6 +40,7 @@ EXTRACTED_STATS_FILE=""
 # ==== 配置文件加载 ====
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="${DNS_MONITOR_CONFIG:-${SCRIPT_DIR}/dns_monitor.conf}"
+PLAN_ONLY=false
 
 # 默认配置
 DEFAULT_DOMAIN_FILE="/etc/mosdns/mosdns.log"
@@ -50,6 +51,8 @@ DEFAULT_HISTORY_FILE="/var/log/dns_monitor_history.json"
 DEFAULT_MAX_LOG_SIZE="100M"
 LOCK_FILE="${DNS_MONITOR_LOCK_FILE:-/run/lock/collect_repeat_dns.lock}"
 LOCK_FD=9
+LOCK_DIR="${LOCK_FILE}.d"
+LOCK_MODE=''
 
 # 仅解析受限的 KEY=VALUE 纯文本；绝不执行配置内容。
 parse_config_value() {
@@ -136,33 +139,25 @@ EOF
 }
 
 # ==== 颜色和格式定义 ====
-declare -A COLORS=(
-    [RED]="\e[31m"
-    [GREEN]="\e[32m"
-    [YELLOW]="\e[33m"
-    [BLUE]="\e[34m"
-    [MAGENTA]="\e[35m"
-    [CYAN]="\e[36m"
-    [BOLD]="\e[1m"
-    [RESET]="\e[0m"
-)
-
-declare -A ICONS=(
-    [INFO]="${COLORS[CYAN]}✨ ℹ️ ${COLORS[RESET]}"
-    [SUCCESS]="${COLORS[GREEN]}🎉 ✅ ${COLORS[RESET]}"
-    [WARN]="${COLORS[YELLOW]}⚠️ ⚡ ${COLORS[RESET]}"
-    [ERROR]="${COLORS[RED]}❌ 💥 ${COLORS[RESET]}"
-    [PROMPT]="${COLORS[MAGENTA]}👉 🌟 ${COLORS[RESET]}"
-    [STATS]="${COLORS[BLUE]}📊 📈 ${COLORS[RESET]}"
-)
+COLOR_RED='\e[31m'; COLOR_GREEN='\e[32m'; COLOR_YELLOW='\e[33m'
+COLOR_BLUE='\e[34m'; COLOR_MAGENTA='\e[35m'; COLOR_CYAN='\e[36m'; COLOR_RESET='\e[0m'
 
 # ==== 日志函数 ====
 log_message() {
     local level="$1"
     local message="$2"
-    local timestamp
+    local timestamp prefix
     timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    echo -e "${ICONS[$level]}$message"
+    case "$level" in
+        INFO) prefix="${COLOR_CYAN}✨ ℹ️ ${COLOR_RESET}" ;;
+        SUCCESS) prefix="${COLOR_GREEN}🎉 ✅ ${COLOR_RESET}" ;;
+        WARN) prefix="${COLOR_YELLOW}⚠️ ⚡ ${COLOR_RESET}" ;;
+        ERROR) prefix="${COLOR_RED}❌ 💥 ${COLOR_RESET}" ;;
+        PROMPT) prefix="${COLOR_MAGENTA}👉 🌟 ${COLOR_RESET}" ;;
+        STATS) prefix="${COLOR_BLUE}📊 📈 ${COLOR_RESET}" ;;
+        *) prefix='' ;;
+    esac
+    printf '%b%s\n' "$prefix" "$message"
     
     # 写入日志文件
     if [[ -n "${LOG_FILE:-}" ]]; then
@@ -186,6 +181,7 @@ cleanup() {
     if (( ${#TEMP_FILES[@]} > 0 )); then
         rm -f -- "${TEMP_FILES[@]}"
     fi
+    [[ "$LOCK_MODE" == mkdir ]] && rmdir "$LOCK_DIR" 2>/dev/null || true
 }
 
 error_handler() {
@@ -199,7 +195,8 @@ trap cleanup EXIT
 trap 'error_handler $LINENO "$BASH_COMMAND"' ERR
 
 size_to_bytes() {
-    local value="${1^^}"
+    local value
+    value=$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]')
     local number
     local unit
     local multiplier=1
@@ -238,6 +235,7 @@ MOSDNS 重复域名监控辅助脚本
 
 选项:
   -c, --config FILE    指定配置文件（默认: $CONFIG_FILE）
+      --plan           只读显示配置、日志和报告路径
   -h, --help           显示帮助信息
 
 也可通过 DNS_MONITOR_CONFIG 环境变量指定配置文件。
@@ -258,6 +256,10 @@ parse_arguments() {
             -h|--help)
                 show_help
                 exit 0
+                ;;
+            --plan)
+                PLAN_ONLY=true
+                shift
                 ;;
             *)
                 log_error "未知参数: $1"
@@ -305,14 +307,22 @@ check_prerequisites() {
     fi
     
     ensure_parent_directory "$OUTPUT_FILE"
-    if ! command -v flock >/dev/null 2>&1; then
-        log_error "缺少必要命令: flock"; exit 1
-    fi
-    ensure_parent_directory "$LOCK_FILE"
-    eval "exec ${LOCK_FD}>\"$LOCK_FILE\""
-    if ! flock -n "$LOCK_FD"; then
-        log_warn "已有 DNS 监控任务运行，退出以避免并发覆盖"
-        exit 1
+    if command -v flock >/dev/null 2>&1; then
+        ensure_parent_directory "$LOCK_FILE"
+        eval "exec ${LOCK_FD}>\"$LOCK_FILE\""
+        if ! flock -n "$LOCK_FD"; then
+            log_warn "已有 DNS 监控任务运行，退出以避免并发覆盖"
+            exit 1
+        fi
+        LOCK_MODE='flock'
+    else
+        ensure_parent_directory "$LOCK_DIR"
+        if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+            log_warn "已有 DNS 监控任务运行，退出以避免并发覆盖"
+            exit 1
+        fi
+        LOCK_MODE='mkdir'
+        log_warn "系统没有 flock，已使用 mkdir 原子锁回退"
     fi
     if [[ "${ENABLE_HISTORY:-false}" == "true" ]]; then
         ensure_parent_directory "$HISTORY_FILE"
@@ -675,6 +685,16 @@ main() {
     start_epoch=$(date +%s)
 
     parse_arguments "$@"
+
+    if [[ "$PLAN_ONLY" == true ]]; then
+        DNS_MONITOR_CREATE_CONFIG=false
+        LOG_FILE=/dev/null
+        load_config
+        printf 'DNS 重复查询分析预览\n配置: %s\n域名源日志: %s\n报告输出: %s\n阈值: %s\n通知: %s\n' \
+            "$CONFIG_FILE" "$DOMAIN_FILE" "$OUTPUT_FILE" "$THRESHOLD" "${ENABLE_WECHAT_NOTIFY:-false}"
+        printf '正式运行才会生成报告和历史记录，不会清空源日志。\n'
+        return 0
+    fi
     
     log_info "DNS域名监控脚本启动 v2.0"
     

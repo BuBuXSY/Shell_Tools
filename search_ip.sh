@@ -58,6 +58,7 @@ file_path="${NGINX_LOG_FILE:-/var/log/nginx/access.log}"
 webhook_url="${WEBHOOK_URL:-${WECHAT_WEBHOOK_URL:-}}"
 cache_file="${NALI_CACHE_FILE:-/tmp/nali_cache.txt}"
 push_enabled=true
+TOP_N="${TOP_N:-20}"
 
 show_help() {
     cat <<EOF
@@ -70,6 +71,8 @@ Nginx 高频 DNS 访问 IP 分析脚本
   --cache-file FILE     IP 归属地缓存路径
   --webhook-url URL     企业微信机器人 Webhook
   --no-push             仅输出本地报告，不推送
+  --top N               最多显示 N 个 IP（默认 20）
+  --interactive         交互选择日志和本地/推送模式
   -h, --help            显示帮助信息
 
 也可通过 NGINX_LOG_FILE、NALI_CACHE_FILE、WEBHOOK_URL 环境变量配置。
@@ -130,6 +133,19 @@ while [[ $# -gt 0 ]]; do
             push_enabled=false
             shift
             ;;
+        --top)
+            require_value "$1" "${2:-}"
+            TOP_N="$2"
+            shift 2
+            ;;
+        --interactive)
+            [[ -t 0 ]] || { log_error "交互模式需要终端"; exit 2; }
+            read -r -p "访问日志 [$file_path]: " choice || exit 2
+            file_path=${choice:-$file_path}
+            read -r -p '推送到企业微信？[y/N]: ' choice || exit 2
+            [[ "$choice" == y || "$choice" == Y ]] || push_enabled=false
+            shift
+            ;;
         -h|--help)
             show_help
             exit 0
@@ -141,6 +157,8 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+[[ "$TOP_N" =~ ^[1-9][0-9]*$ ]] || { log_error "--top 必须是正整数"; exit 2; }
 
 if [[ -z "$webhook_url" || "$webhook_url" == *"你的"* ]]; then
     webhook_url=""
@@ -200,8 +218,11 @@ if [[ -z "$ip_list" ]]; then
     exit 0
 fi
 
-sorted_ips=$(printf '%s\n' "$ip_list" | sort -k2,2nr -k1,1)
-readarray -t ip_array <<< "$sorted_ips"
+sorted_ips=$(printf '%s\n' "$ip_list" | sort -k2,2nr -k1,1 | awk -v limit="$TOP_N" 'NR <= limit')
+ip_array=()
+while IFS= read -r ip; do
+    ip_array+=("$ip")
+done <<< "$sorted_ips"
 
 log_info "📋🚀 以下为 DNS 查询频次较高的 IP："
 message="📊 高频 DNS 查询 IP 报告"$'\n'"🕒 时间：$(date '+%F %T')"

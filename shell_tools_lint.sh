@@ -39,6 +39,7 @@ RESET="\e[0m"
 
 FAILED=0
 CHECKED=0
+STATIC_ONLY=0
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 
 log_info() { echo -e "${BLUE}ℹ️  $1${RESET}"; }
@@ -60,6 +61,7 @@ usage() {
 
 用法:
   ./shell_tools_lint.sh
+  ./shell_tools_lint.sh --static-only
   ./shell_tools_lint.sh --help
 
 脚本始终检查自身所在的仓库根目录，可从任意工作目录执行。
@@ -73,6 +75,9 @@ validate_args() {
             if [[ "$1" == "-h" || "$1" == "--help" ]]; then
                 usage
                 exit 0
+            elif [[ "$1" == "--static-only" ]]; then
+                STATIC_ONLY=1
+                return 0
             fi
             log_error "未知参数：$1"
             usage >&2
@@ -244,8 +249,12 @@ main() {
         check_userscript_metadata "$file"
     done
 
-    check_userscript_smoke
-    check_shell_behavior
+    if [[ "$STATIC_ONLY" -eq 0 ]]; then
+        check_userscript_smoke
+        check_shell_behavior
+    else
+        log_info "🔎 静态检查模式：跳过行为测试和 userscript 冒烟测试"
+    fi
     check_readme_inventory "${shell_files[@]}" "${userscript_files[@]}" "${config_files[@]}"
 
     if [[ "$CHECKED" -eq 0 ]]; then

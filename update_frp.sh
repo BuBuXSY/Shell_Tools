@@ -79,6 +79,7 @@ ACTION=""                              # install / update / uninstall
 CLI_ROLE=""
 CLI_ACTION=""
 ASSUME_YES=0
+PLAN_ONLY=0
 BINARY_PATH=""
 CONFIG_PATH=""
 SERVICE_PATH=""
@@ -165,11 +166,12 @@ trap 'handle_signal TERM 143' TERM
 
 usage() {
     cat <<EOF
-用法: $0 [--action install|update|uninstall] [--role frpc|frps] [--yes] [--help]
+用法: $0 [--action install|update|uninstall] [--role frpc|frps] [--plan] [--yes] [--help]
 
   --action  指定安装/更新或卸载
   --role    指定客户端 frpc 或服务端 frps
   --yes     跳过安装/卸载确认
+  --plan    只读显示角色、目标路径和服务管理方式
   --help    显示帮助并退出
 
 测试时可设置 FRP_ROOT 将系统文件写入临时根目录；
@@ -199,6 +201,7 @@ parse_args() {
                 shift 2
                 ;;
             --yes|-y) ASSUME_YES=1; shift ;;
+            --plan) PLAN_ONLY=1; shift ;;
             --help|-h) usage; exit 0 ;;
             *) log ERR "未知参数: $1"; usage >&2; exit 2 ;;
         esac
@@ -1068,6 +1071,16 @@ show_summary() {
 # =========================
 main() {
     parse_args "$@"
+    if [ "$PLAN_ONLY" -eq 1 ]; then
+        printf 'FRP 操作预览\n角色: %s\n操作: %s\n安装根目录: %s\n服务管理: %s\n' \
+            "${CLI_ROLE:-交互选择}" "${CLI_ACTION:-交互选择}" "${FRP_ROOT:-系统根目录}" "$SERVICE_MANAGER_OVERRIDE"
+        printf '正式运行会下载并校验发布包；更新已有实例会保留服务状态并支持失败回滚。\n'
+        return 0
+    fi
+    if [ "$(uname -s)" = Darwin ]; then
+        log ERR "当前 FRP 服务部署支持 Linux/systemd 与 OpenWrt/procd；macOS 请使用 brew 安装 frp 并通过 launchd 管理。"
+        return 1
+    fi
     require_root
 
     printf "\n${CYAN}╔══════════════════════════════════════════════╗${RESET}\n"

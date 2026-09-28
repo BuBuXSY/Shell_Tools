@@ -73,6 +73,7 @@ usage() {
 用法:
   ./ssl_cert_monitor.sh
   ./ssl_cert_monitor.sh --remote-host example.invalid --remote-port 443
+  ./ssl_cert_monitor.sh --interactive
   WARN_DAYS=30 ./ssl_cert_monitor.sh
   CERT_DIRS="/etc/nginx/ssl /etc/letsencrypt/live" ./ssl_cert_monitor.sh
 
@@ -86,7 +87,7 @@ usage() {
   REMOTE_PORT        🔌 远程 TLS 端口，默认 443
   REMOTE_TIMEOUT     ⏱️ 远程 TLS 连接超时秒数，默认 5
 
-选项：--remote-host HOST [--remote-port PORT] [--remote-timeout SECONDS]
+选项：--remote-host HOST [--remote-port PORT] [--remote-timeout SECONDS] [--interactive]
 EOF
 }
 
@@ -119,6 +120,13 @@ validate() {
             --remote-port=*) REMOTE_PORT=${1#*=}; shift ;;
             --remote-timeout) [[ $# -ge 2 ]] || { log_error "参数 $1 缺少超时"; exit 2; }; REMOTE_TIMEOUT=$2; shift 2 ;;
             --remote-timeout=*) REMOTE_TIMEOUT=${1#*=}; shift ;;
+            --interactive)
+                [[ -t 0 ]] || { log_error '交互模式需要终端'; exit 2; }
+                read -r -p "远程主机（留空仅本地） [$REMOTE_HOST]: " choice || exit 2
+                REMOTE_HOST=${choice:-$REMOTE_HOST}
+                read -r -p "告警天数 [$WARN_DAYS]: " choice || exit 2
+                WARN_DAYS=${choice:-$WARN_DAYS}
+                shift ;;
             *) log_error "未知参数：$1"; usage >&2; exit 2 ;;
         esac
     done
@@ -134,10 +142,18 @@ validate() {
 
 collect_remote_cert() {
     [[ -n "$REMOTE_HOST" ]] || return 0
-    local cert_file
+    local cert_file timeout_cmd=timeout
+    if ! has_cmd timeout; then
+        if has_cmd gtimeout; then timeout_cmd=gtimeout
+        else
+            log_warn '远程 TLS 检查需要 timeout/gtimeout；macOS 可安装 brew install coreutils'
+            SCAN_FAILURES=$((SCAN_FAILURES + 1))
+            return 0
+        fi
+    fi
     cert_file=$(mktemp "${TMPDIR:-/tmp}/ssl-remote-cert.XXXXXX") || { log_warn "无法创建远程证书临时文件"; SCAN_FAILURES=$((SCAN_FAILURES + 1)); return; }
     TEMP_FILES+=("$cert_file")
-    if ! timeout "$REMOTE_TIMEOUT" openssl s_client -connect "${REMOTE_HOST}:${REMOTE_PORT}" -servername "$REMOTE_HOST" -showcerts </dev/null 2>/dev/null | openssl x509 -outform PEM > "$cert_file" 2>/dev/null; then
+    if ! "$timeout_cmd" "$REMOTE_TIMEOUT" openssl s_client -connect "${REMOTE_HOST}:${REMOTE_PORT}" -servername "$REMOTE_HOST" -showcerts </dev/null 2>/dev/null | openssl x509 -outform PEM > "$cert_file" 2>/dev/null; then
         log_warn "远程 TLS 连接或证书读取失败：${REMOTE_HOST}:${REMOTE_PORT}"
         SCAN_FAILURES=$((SCAN_FAILURES + 1)); return
     fi
@@ -146,13 +162,15 @@ collect_remote_cert() {
 }
 
 collect_cert_files() {
-    local -A seen=()
+    local seen_keys=''
     local dir
     local cert_file
     local fingerprint
     local dedupe_key
     local find_output
     local find_status
+    local -a find_prefix=(find -L) find_device=(-xdev)
+    if [[ "$(uname -s)" == Darwin ]]; then find_prefix=(find -L -x); find_device=(); fi
     for dir in "${CERT_PATHS[@]}"; do
         if [[ ! -d "$dir" ]]; then
             continue
@@ -170,7 +188,7 @@ collect_cert_files() {
         }
         TEMP_FILES+=("$find_output")
         find_status=0
-        find -L "$dir" -xdev -type f \( -iname "*.pem" -o -iname "*.crt" -o -iname "*.cer" \) \
+        "${find_prefix[@]}" "$dir" "${find_device[@]}" -type f \( -iname "*.pem" -o -iname "*.crt" -o -iname "*.cer" \) \
             ! -iname "*key*" ! -iname "*priv*" -print0 > "$find_output" 2>/dev/null \
             || find_status=$?
         while IFS= read -r -d '' cert_file; do
@@ -181,9 +199,9 @@ collect_cert_files() {
             else
                 dedupe_key="path:$cert_file"
             fi
-            if [[ -z "${seen[$dedupe_key]+x}" ]]; then
+            if ! printf '%s\n' "$seen_keys" | grep -Fxq -- "$dedupe_key"; then
                 CERT_FILES+=("$cert_file")
-                seen["$dedupe_key"]=1
+                seen_keys+="${dedupe_key}"$'\n'
             fi
         done < "$find_output"
         rm -f -- "$find_output"

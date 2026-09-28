@@ -62,12 +62,20 @@ usage() {
 
 用法:
   ./disk_usage_analyzer.sh
+  ./disk_usage_analyzer.sh --target /var/log --top 10 --depth 2
   TARGETS="/ /var/www /opt" TOP_N=20 ./disk_usage_analyzer.sh
 
 环境变量:
   TARGETS    📁 要分析的目录，多个目录用空格分隔
   TOP_N      🔢 Top 列表数量，默认 15
   MAX_DEPTH  🧱 目录统计深度，默认 2
+
+选项:
+  --target PATH  📁 指定扫描目录，可重复使用
+  --top N        🔢 Top 数量
+  --depth N      🧱 目录统计深度
+  --interactive  🖱️  交互设置扫描目录和 Top 数量
+  -h, --help     显示帮助
 EOF
 }
 
@@ -83,23 +91,29 @@ has_cmd() {
 }
 
 validate() {
-    case "$#" in
-        0) ;;
-        1)
-            if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-                usage
-                exit 0
-            fi
-            error "未知参数：$1"
-            usage >&2
-            exit 2
-            ;;
-        *)
-            error "参数过多，本脚本通过环境变量接收配置"
-            usage >&2
-            exit 2
-            ;;
-    esac
+    while (($#)); do
+        case "$1" in
+            -h|--help) usage; exit 0 ;;
+            --target)
+                [[ $# -ge 2 && -n "$2" ]] || { error "--target 缺少目录"; exit 2; }
+                TARGET_PATHS+=("$2"); shift 2 ;;
+            --top)
+                [[ $# -ge 2 ]] || { error "--top 缺少数量"; exit 2; }
+                TOP_N=$2; shift 2 ;;
+            --depth)
+                [[ $# -ge 2 ]] || { error "--depth 缺少层数"; exit 2; }
+                MAX_DEPTH=$2; shift 2 ;;
+            --interactive)
+                [[ -t 0 ]] || { error "交互模式需要终端"; exit 2; }
+                local choice
+                read -r -p "扫描目录 [${TARGETS}]: " choice || exit 2
+                TARGETS=${choice:-$TARGETS}
+                read -r -p "Top 数量 [${TOP_N}]: " choice || exit 2
+                TOP_N=${choice:-$TOP_N}
+                shift ;;
+            *) error "未知参数：$1"; usage >&2; exit 2 ;;
+        esac
+    done
 
     if [[ ! "$TOP_N" =~ ^[0-9]+$ || "$TOP_N" -lt 1 ]]; then
         error "TOP_N 必须是大于 0 的数字"
@@ -111,7 +125,9 @@ validate() {
         exit 2
     fi
 
-    read -r -a TARGET_PATHS <<< "$TARGETS"
+    if [[ "${#TARGET_PATHS[@]}" -eq 0 ]]; then
+        read -r -a TARGET_PATHS <<< "$TARGETS"
+    fi
     if [[ "${#TARGET_PATHS[@]}" -eq 0 ]]; then
         error "TARGETS 不能为空"
         exit 2
@@ -176,7 +192,15 @@ show_top_dirs() {
         info "📁 分析目录：$target"
         raw_output=$(mktemp "${TMPDIR:-/tmp}/disk-usage-du.XXXXXX") || { warn "无法创建临时文件"; continue; }
         scan_status=0
-        du -xk -d "$MAX_DEPTH" "$target" > "$raw_output" 2>/dev/null || scan_status=$?
+        if du -xk -d "$MAX_DEPTH" "$target" > "$raw_output" 2>/dev/null; then
+            :
+        else
+            scan_status=$?
+            if du -xk "$target" > "$raw_output" 2>/dev/null; then
+                warn "当前 du 不支持深度参数，已使用兼容模式：$target"
+                scan_status=0
+            fi
+        fi
         output=$(sort -nr "$raw_output" \
             | head -n "$TOP_N" \
             | awk '{size=$1; $1=""; sub(/^ /, ""); unit="KB"; if (size >= 1099511627776) {size/=1099511627776; unit="PB"} else if (size >= 1073741824) {size/=1073741824; unit="TB"} else if (size >= 1048576) {size/=1048576; unit="GB"} else if (size >= 1024) {size/=1024; unit="MB"} printf "   📦 %8.2f %-2s  %s\n", size, unit, $0}' || true)
@@ -196,19 +220,21 @@ show_large_files() {
     local output
     local raw_output
     local scan_status
+    local -a find_prefix=(find) find_device=(-xdev)
+    if [[ "$(uname -s)" == Darwin ]]; then find_prefix=(find -x); find_device=(); fi
     for target in "${TARGET_PATHS[@]}"; do
         [[ -d "$target" && -r "$target" && -x "$target" ]] || continue
         info "🔍 查找目录：$target"
         raw_output=$(mktemp "${TMPDIR:-/tmp}/disk-usage-find.XXXXXX") || { warn "无法创建临时文件"; continue; }
         scan_status=0
         if find "$target" -prune -printf '' >/dev/null 2>&1; then
-            find "$target" -xdev -type f -size +100M -printf '%s\t%p\n' > "$raw_output" 2>/dev/null \
+            "${find_prefix[@]}" "$target" "${find_device[@]}" -type f -size +100M -printf '%s\t%p\n' > "$raw_output" 2>/dev/null \
                 || scan_status=$?
             output=$(sort -nr "$raw_output" \
                 | head -n "$TOP_N" \
                 | awk '{size=$1; $1=""; sub(/^\t? ?/, ""); printf "   🧱 %.2f GB  %s\n", size/1024/1024/1024, $0}' || true)
         else
-            find "$target" -xdev -type f -size +100M -exec sh -c '
+            "${find_prefix[@]}" "$target" "${find_device[@]}" -type f -size +100M -exec sh -c '
                 for file do
                     size=$(wc -c < "$file" 2>/dev/null) || continue
                     printf "%s\t%s\n" "$size" "$file"
@@ -239,7 +265,7 @@ show_log_usage() {
         else
             warn "当前用户无法统计 /var/log 总占用"
         fi
-        find /var/log -type f -size +50M -printf '%s\t%p\n' 2>/dev/null \
+        find /var/log -type f -size +50M -exec sh -c 'for file do size=$(wc -c < "$file" 2>/dev/null) || continue; printf "%s\t%s\n" "$size" "$file"; done' sh {} + 2>/dev/null \
             | sort -nr \
             | head -n "$TOP_N" \
             | awk '{size=$1; $1=""; sub(/^\t? ?/, ""); printf "   🔥 %.2f MB  %s\n", size/1024/1024, $0}' || true
@@ -278,7 +304,7 @@ show_suggestions() {
 main() {
     validate "$@"
     banner
-    info "📁 分析目标：$TARGETS"
+    info "📁 分析目标：${TARGET_PATHS[*]}"
     info "🔢 Top 数量：$TOP_N"
     show_filesystems
     show_inode_usage

@@ -61,13 +61,14 @@ show_help() {
     cat <<EOF
 GeoIP 国家数据库更新脚本
 
-用法: $0 [--help]
+用法: $0 [--status|--help]
 
 下载并校验 Country.mmdb，原子替换现有数据库，并在配置通过后重载 Nginx。
 实际更新需要 root 权限；可通过 WECHAT_WEBHOOK_URL 或 WEBHOOK_URL 配置通知。
 
 选项:
   -h, --help    显示帮助信息
+  --status      只读显示本地数据库状态和记录的校验摘要
 EOF
 }
 
@@ -115,12 +116,30 @@ if [[ $# -gt 0 ]]; then
             show_help
             exit 0
             ;;
+        --status)
+            [[ $# -eq 1 ]] || { show_help >&2; exit 2; }
+            printf 'GeoIP 数据库: %s\n' "$target_path"
+            if [[ -f "$target_path" ]]; then
+                printf '文件大小: %s 字节\n' "$(wc -c < "$target_path")"
+                printf '结构检查: '; if is_valid_mmdb "$target_path"; then printf '通过\n'; else printf '失败\n'; fi
+                printf 'SHA-256 信任检查: '; if is_trusted_local_mmdb; then printf '通过\n'; else printf '未通过或缺少记录\n'; fi
+            else
+                printf '状态: 未安装\n'
+            fi
+            [[ ! -r "$version_file" ]] || sed -n '1,4p' "$version_file"
+            exit 0
+            ;;
         *)
             echo -e "${RED}❌ 未知参数: $1${RESET}" >&2
             show_help >&2
             exit 2
             ;;
     esac
+fi
+
+if [[ "$(uname -s)" != Linux || -f /etc/openwrt_release ]]; then
+    printf '❌ 当前 GeoIP 更新目标固定为 Linux Nginx 路径；macOS/OpenWrt 请使用对应包和实际数据库路径。\n' >&2
+    exit 1
 fi
 
 # ===== 企业微信推送函数 =====

@@ -340,6 +340,7 @@ show_help() {
   --endpoint URL         仅测试自定义 DoH endpoint（必须 HTTPS）
   --max-concurrency N    并发请求数（默认 4）
   --diagnosis            网络诊断
+  --interactive          交互选择域名、超时和输出格式
   --no-color             禁用 ANSI 颜色
   --color=MODE           auto、always 或 never
   -h, --help             显示帮助信息
@@ -393,6 +394,16 @@ while [[ $# -gt 0 ]]; do
             ;;
         --diagnosis)
             RUN_DIAGNOSIS=true
+            shift
+            ;;
+        --interactive)
+            [[ -t 0 ]] || { echo '交互模式需要终端' >&2; exit 2; }
+            read -r -p "测试域名 [$TEST_DOMAIN]: " choice || exit 2
+            TEST_DOMAIN=${choice:-$TEST_DOMAIN}
+            read -r -p "超时秒数 [$TIMEOUT]: " choice || exit 2
+            TIMEOUT=${choice:-$TIMEOUT}
+            read -r -p "输出格式 table/json/csv [$OUTPUT_FORMAT]: " choice || exit 2
+            OUTPUT_FORMAT=${choice:-$OUTPUT_FORMAT}
             shift
             ;;
         -h|--help)

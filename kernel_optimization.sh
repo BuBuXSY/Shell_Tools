@@ -71,6 +71,7 @@ LIMITS_TMP=""
 DEGRADED=0
 TRANSACTION_ACTIVE=0
 TRANSACTION_COMMITTED=0
+PLAN_ONLY=0
 RUNTIME_RESTORE_SCRIPT=""
 declare -A RUNTIME_SNAPSHOTS=()
 
@@ -179,7 +180,7 @@ ARCH=$(uname -m)
 usage() {
     local status="${1:-0}"
     echo -e "${CYAN}用法：${RESET}"
-    echo "  $0 [--scene <场景>] [--help]"
+    echo "  $0 [--scene <场景>] [--plan] [--help]"
     echo
     echo -e "${CYAN}可用场景：${RESET}"
     echo "  vps        普通 VPS / 云主机（均衡参数）"
@@ -193,6 +194,7 @@ usage() {
     echo "  $0                       # 交互式菜单"
     echo "  $0 --scene bypass        # 直接指定旁路由"
     echo "  $0 --scene sbc           # 直接指定单片机"
+    echo "  $0 --scene vps --plan    # 只查看变更范围"
     exit "$status"
 }
 
@@ -220,6 +222,7 @@ parse_args() {
                 shift
                 ;;
             --help|-h) usage ;;
+            --plan) PLAN_ONLY=1; shift ;;
             *)
                 err "未知参数: $1"; usage 2
                 ;;
@@ -1207,6 +1210,21 @@ show_summary() {
 # =========================
 main() {
     parse_args "$@"
+
+    if [[ "$PLAN_ONLY" -eq 1 ]]; then
+        printf '内核优化预览\n场景: %s\n' "${SCENE:-未指定；正式运行时交互选择}"
+        printf '持久化文件: %s、/etc/security/limits.conf\n' "$SYSCTL_CONF"
+        if [[ "$SCENE" == router || "$SCENE" == bypass ]]; then
+            printf '额外文件: /etc/modules-load.d/netfilter.conf\n'
+        fi
+        printf '运行时可能调整: sysctl、IRQ、磁盘 I/O；正式运行会先备份并要求确认。\n'
+        return 0
+    fi
+
+    if [[ "$(uname -s)" != Linux || -f /etc/openwrt_release ]]; then
+        err "当前内核调优方案使用 Linux sysctl/systemd 路径；macOS 和 OpenWrt 请使用各自的网络/启动配置管理。"
+        return 1
+    fi
 
     [[ -t 1 ]] && command -v clear >/dev/null 2>&1 && clear || true
     echo -e "${CYAN}"

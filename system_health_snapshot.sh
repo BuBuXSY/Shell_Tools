@@ -32,6 +32,7 @@ usage() {
       --inode-warn-percent N   inode 已用告警阈值（默认 90）
       --no-color          禁用 ANSI 颜色
       --color=MODE        auto、always 或 never
+      --interactive       交互选择输出格式和严格模式
   -h, --help              显示帮助
 
 所有快照数据均为本机只读采集；JSON 始终只写 stdout。
@@ -53,6 +54,13 @@ while (($#)); do
         --inode-warn-percent=*) INODE_WARN_PERCENT=${1#*=}; shift ;;
         --no-color) COLOR_MODE=never; shift ;;
         --color=*) COLOR_MODE=${1#*=}; shift ;;
+        --interactive)
+            [[ -t 0 ]] || { printf '交互模式需要终端\n' >&2; exit 2; }
+            read -r -p "输出格式 text/json [$FORMAT]: " choice || exit 2
+            FORMAT=${choice:-$FORMAT}
+            read -r -p '告警时返回失败状态？[y/N] ' choice || exit 2
+            [[ "$choice" == y || "$choice" == Y ]] && STRICT=true || STRICT=false
+            shift ;;
         -h|--help) usage; exit 0 ;;
         *) printf '未知参数: %s\n' "$1" >&2; usage >&2; exit 2 ;;
     esac
@@ -76,26 +84,46 @@ json_escape() { local v=$1; v=${v//\\/\\\\}; v=${v//\"/\\\"}; v=${v//$'\n'/\\n};
 read_first() { [[ -r "$1" ]] && IFS= read -r REPLY < "$1" || return 1; }
 
 uptime_seconds=null; load1=null; load5=null; load15=null; mem_total_kb=null; mem_available_kb=null; memory_used_percent=null
-if read_first "$PROC_ROOT/uptime"; then uptime_seconds=${REPLY%% *}; else warn "无法读取 $PROC_ROOT/uptime"; fi
-if read_first "$PROC_ROOT/loadavg"; then read -r load1 load5 load15 _ <<< "$REPLY"; else warn "无法读取 $PROC_ROOT/loadavg"; fi
+if [[ "$(uname -s)" == Darwin && "$PROC_ROOT" == /proc ]]; then
+    boot_epoch=$(sysctl -n kern.boottime 2>/dev/null | sed -n 's/.*sec = \([0-9]*\).*/\1/p' || true)
+    [[ "$boot_epoch" =~ ^[0-9]+$ ]] && uptime_seconds=$(($(date +%s) - boot_epoch)) || warn "无法读取 macOS 运行时间"
+    load_values=$(sysctl -n vm.loadavg 2>/dev/null | tr -d '{}' || true)
+    if [[ -n "$load_values" ]]; then read -r load1 load5 load15 <<< "$load_values"; else warn "无法读取 macOS 负载"; fi
+    memory_bytes=$(sysctl -n hw.memsize 2>/dev/null || true)
+    free_pages=$(vm_stat 2>/dev/null | awk '/Pages free:|Pages inactive:|Pages speculative:/ {gsub(/\./,"",$3); sum += $3} END {print sum+0}' || true)
+    page_size=$(vm_stat 2>/dev/null | awk 'NR==1 {for(i=1;i<=NF;i++) if($i=="of") {print $(i+1); exit}}' || true)
+    if [[ "$memory_bytes" =~ ^[0-9]+$ && "$free_pages" =~ ^[0-9]+$ && "$page_size" =~ ^[0-9]+$ && "$memory_bytes" -gt 0 ]]; then
+        mem_total_kb=$((memory_bytes / 1024))
+        mem_available_kb=$((free_pages * page_size / 1024))
+        (( mem_available_kb > mem_total_kb )) && mem_available_kb=$mem_total_kb
+        memory_used_percent=$((100 * (mem_total_kb - mem_available_kb) / mem_total_kb))
+    else warn "无法读取 macOS 内存数据"; fi
+else
+    if read_first "$PROC_ROOT/uptime"; then uptime_seconds=${REPLY%% *}; else warn "无法读取 $PROC_ROOT/uptime"; fi
+    if read_first "$PROC_ROOT/loadavg"; then read -r load1 load5 load15 _ <<< "$REPLY"; else warn "无法读取 $PROC_ROOT/loadavg"; fi
+fi
 if [[ "$load1" != null ]] && awk -v value="$load1" -v limit="$LOAD_WARN" 'BEGIN { exit !(limit > 0 && value >= limit) }'; then warn "1 分钟负载 $load1 达到阈值 $LOAD_WARN"; fi
-if [[ -r "$PROC_ROOT/meminfo" ]]; then
+if [[ "$mem_total_kb" == null && -r "$PROC_ROOT/meminfo" ]]; then
     mem_total_kb=$(grep -m1 '^MemTotal:' "$PROC_ROOT/meminfo" | tr -s ' ' | cut -d' ' -f2 || true)
     mem_available_kb=$(grep -m1 '^MemAvailable:' "$PROC_ROOT/meminfo" | tr -s ' ' | cut -d' ' -f2 || true)
     if [[ "$mem_total_kb" =~ ^[0-9]+$ && "$mem_available_kb" =~ ^[0-9]+$ && "$mem_total_kb" -gt 0 ]]; then
         memory_used_percent=$((100 * (mem_total_kb - mem_available_kb) / mem_total_kb))
         (( memory_used_percent >= MEMORY_WARN_PERCENT )) && warn "内存已用 ${memory_used_percent}% 达到阈值 ${MEMORY_WARN_PERCENT}%"
     else mem_total_kb=null; mem_available_kb=null; warn "无法解析内存数据"; fi
-else warn "无法读取 $PROC_ROOT/meminfo"; fi
+elif [[ "$mem_total_kb" == null ]]; then warn "无法读取 $PROC_ROOT/meminfo"; fi
 
 disk=$(df -P -x tmpfs -x devtmpfs 2>/dev/null | tail -n +2 || true)
 inodes=$(df -Pi -x tmpfs -x devtmpfs 2>/dev/null | tail -n +2 || true)
+[[ -n "$disk" ]] || disk=$(df -P 2>/dev/null | tail -n +2 || true)
+[[ -n "$inodes" ]] || inodes=$(df -Pi 2>/dev/null | tail -n +2 || true)
 [[ -n "$disk" ]] || warn "无法采集磁盘使用率"
 [[ -n "$inodes" ]] || warn "无法采集 inode 使用率"
 while read -r _ _ _ _ used mount; do [[ "$used" =~ ^[0-9]+%$ ]] && (( ${used%%%} >= DISK_WARN_PERCENT )) && warn "磁盘 $mount 使用率 $used 达到阈值"; done <<< "$disk"
 while read -r _ _ _ _ used mount; do [[ "$used" =~ ^[0-9]+%$ ]] && (( ${used%%%} >= INODE_WARN_PERCENT )) && warn "inode $mount 使用率 $used 达到阈值"; done <<< "$inodes"
 ports=''
-if command -v ss >/dev/null 2>&1; then ports=$(ss -H -ltn 2>/dev/null | wc -l | tr -d ' ' || true); else warn "缺少 ss，跳过监听端口统计"; fi
+if command -v ss >/dev/null 2>&1; then ports=$(ss -H -ltn 2>/dev/null | wc -l | tr -d ' ' || true)
+elif command -v lsof >/dev/null 2>&1; then ports=$(lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null | awk 'NR>1 {count++} END {print count+0}' || true)
+else warn "缺少 ss/lsof，跳过监听端口统计"; fi
 services=''
 if command -v systemctl >/dev/null 2>&1; then services=$(systemctl --no-legend --state=failed --type=service 2>/dev/null | wc -l | tr -d ' ' || true); else warn "缺少 systemctl，跳过失败服务统计"; fi
 

@@ -73,6 +73,7 @@ show_help() {
   --log-file FILE        运行日志文件
   --cache-timeout SEC    流量缓存有效期（默认: 3600 秒）
   --dry-run              仅在终端显示报告，不推送
+  --interactive          交互选择预览或推送
   -h, --help             显示帮助信息
 
 也可通过 WEBHOOK_URL、SERVER_STATUS_CACHE_FILE、SERVER_STATUS_LOG_FILE 环境变量配置。
@@ -134,6 +135,12 @@ while [[ $# -gt 0 ]]; do
       DRY_RUN=true
       shift
       ;;
+    --interactive)
+      [[ -t 0 ]] || { log_error '交互模式需要终端'; exit 2; }
+      read -r -p '仅本地预览，不推送？[Y/n] ' choice || exit 2
+      [[ "$choice" == n || "$choice" == N ]] || DRY_RUN=true
+      shift
+      ;;
     -h|--help)
       show_help
       exit 0
@@ -182,7 +189,8 @@ if [[ "$DRY_RUN" == false ]] && ! command -v curl >/dev/null 2>&1; then
   exit 1
 fi
 
-required_commands=(awk date df dirname free mktemp ps sed uptime)
+required_commands=(awk date df dirname mktemp ps sed uptime)
+[[ "$(uname -s)" == Darwin ]] || required_commands+=(free)
 for command_name in "${required_commands[@]}"; do
   if ! command -v "$command_name" >/dev/null 2>&1; then
     log_error "缺少必要命令: $command_name"
@@ -204,6 +212,8 @@ LOCATION=$(sed -n 's/.*来自于：\(.*\)$/\1/p' <<< "$IP_INFO_RAW")
 NET_INTERFACE=""
 if command -v ip >/dev/null 2>&1; then
   NET_INTERFACE=$(ip route get 1.1.1.1 2>/dev/null | awk '{for (i=1; i<=NF; i++) if ($i == "dev") {print $(i+1); exit}}' || true)
+elif command -v route >/dev/null 2>&1; then
+  NET_INTERFACE=$(route -n get default 2>/dev/null | awk '/interface:/ {print $2; exit}' || true)
 fi
 if [[ -z "$NET_INTERFACE" || ! -d "/sys/class/net/$NET_INTERFACE" ]]; then
   for interface_path in /sys/class/net/*; do
@@ -217,8 +227,13 @@ if [[ -z "$NET_INTERFACE" || ! -d "/sys/class/net/$NET_INTERFACE" ]]; then
 fi
 [[ -z "$NET_INTERFACE" ]] && NET_INTERFACE="未知"
 
-RX_NOW=$(read_counter "/sys/class/net/${NET_INTERFACE}/statistics/rx_bytes")
-TX_NOW=$(read_counter "/sys/class/net/${NET_INTERFACE}/statistics/tx_bytes")
+COUNTERS_AVAILABLE=true
+if [[ -r "/sys/class/net/${NET_INTERFACE}/statistics/rx_bytes" && -r "/sys/class/net/${NET_INTERFACE}/statistics/tx_bytes" ]]; then
+  RX_NOW=$(read_counter "/sys/class/net/${NET_INTERFACE}/statistics/rx_bytes")
+  TX_NOW=$(read_counter "/sys/class/net/${NET_INTERFACE}/statistics/tx_bytes")
+else
+  RX_NOW=0; TX_NOW=0; COUNTERS_AVAILABLE=false
+fi
 NOW_EPOCH=$(date +%s)
 
 LAST_EPOCH=$NOW_EPOCH
@@ -249,8 +264,11 @@ else
   (( RX_RATE < 0 )) && RX_RATE=0
   (( TX_RATE < 0 )) && TX_RATE=0
 fi
+if [[ "$COUNTERS_AVAILABLE" == false ]]; then
+  RX_RATE=0; TX_RATE=0
+fi
 
-if [[ "$DRY_RUN" == false ]]; then
+if [[ "$DRY_RUN" == false && "$COUNTERS_AVAILABLE" == true ]]; then
   cache_tmp=$(mktemp "${CACHE_FILE}.tmp.XXXXXX")
   trap 'rm -f -- "$cache_tmp"' EXIT
   printf '%s %s %s %s\n' "$NOW_EPOCH" "$RX_NOW" "$TX_NOW" "$NET_INTERFACE" > "$cache_tmp"
@@ -264,9 +282,19 @@ else
   read -r CPU1 CPU5 CPU15 <<< "$(uptime | awk -F 'load average:|load averages:' '{gsub(/,/, "", $2); print $2}')"
 fi
 
-if ! read -r MEM_TOTAL MEM_USED MEM_BUFF_CACHE MEM_AVAILABLE < <(free -m | awk '/^Mem:/ {print $2, $3, $6, $7}'); then
-  log_error "无法读取内存统计。"
-  exit 1
+if command -v free >/dev/null 2>&1; then
+  read -r MEM_TOTAL MEM_USED MEM_BUFF_CACHE MEM_AVAILABLE < <(free -m | awk '/^Mem:/ {print $2, $3, $6, $7}') || true
+elif [[ "$(uname -s)" == Darwin ]]; then
+  mem_bytes=$(sysctl -n hw.memsize 2>/dev/null || true)
+  free_pages=$(vm_stat 2>/dev/null | awk '/Pages free:|Pages inactive:|Pages speculative:/ {gsub(/\./,"",$3); sum += $3} END {print sum+0}' || true)
+  page_size=$(vm_stat 2>/dev/null | awk 'NR==1 {for(i=1;i<=NF;i++) if($i=="of") {print $(i+1); exit}}' || true)
+  if [[ ! "$mem_bytes" =~ ^[0-9]+$ || ! "$free_pages" =~ ^[0-9]+$ || ! "$page_size" =~ ^[0-9]+$ ]]; then
+    log_error "无法解析 macOS 内存统计。"
+    exit 1
+  fi
+  MEM_TOTAL=$(( ${mem_bytes:-0} / 1024 / 1024 ))
+  MEM_AVAILABLE=$(( ${free_pages:-0} * ${page_size:-0} / 1024 / 1024 ))
+  MEM_USED=$(( MEM_TOTAL - MEM_AVAILABLE )); MEM_BUFF_CACHE=0
 fi
 if [[ "$MEM_TOTAL" =~ ^[1-9][0-9]*$ && "$MEM_USED" =~ ^[0-9]+$ ]]; then
   MEM_USAGE=$(( MEM_USED * 100 / MEM_TOTAL ))
@@ -275,12 +303,19 @@ else
   exit 1
 fi
 
-DISK_INFO=$(df -h --output=target,pcent | awk 'NR > 1 {printf "%s%s %s", separator, $1, $2; separator=", "}')
+DISK_INFO=$(df -h --output=target,pcent 2>/dev/null | awk 'NR > 1 {printf "%s%s %s", separator, $1, $2; separator=", "}' || true)
+[[ -n "$DISK_INFO" ]] || DISK_INFO=$(df -P -h | awk 'NR > 1 {printf "%s%s %s", separator, $6, $5; separator=", "}')
 
-TOP_PROC=$(ps -eo pid=,pcpu=,comm= --sort=-pcpu | \
-  awk 'NR <= 3 {printf "PID:%s CPU:%.1f%% CMD:%s%s", $1, $2, $3, (NR < 3 ? "\n" : "")}')
+TOP_PROC=$(ps -eo pid=,pcpu=,comm= --sort=-pcpu 2>/dev/null | \
+  awk 'NR <= 3 {printf "PID:%s CPU:%.1f%% CMD:%s%s", $1, $2, $3, (NR < 3 ? "\n" : "")}' || true)
+[[ -n "$TOP_PROC" ]] || TOP_PROC=$(ps -A -o pid= -o %cpu= -o comm= -r 2>/dev/null | \
+  awk 'NR <= 3 {printf "PID:%s CPU:%.1f%% CMD:%s%s", $1, $2, $3, (NR < 3 ? "\n" : "")}' || true)
 
-UPTIME=$(uptime -p)
+UPTIME=$(uptime -p 2>/dev/null || uptime)
+RX_RATE_TEXT="${RX_RATE} KB/s"; TX_RATE_TEXT="${TX_RATE} KB/s"
+if [[ "$COUNTERS_AVAILABLE" == false ]]; then
+  RX_RATE_TEXT='不可用'; TX_RATE_TEXT='不可用'
+fi
 
 REPORT_CONTENT=$(cat <<EOF
 🖥️ 服务器状态报告
@@ -297,8 +332,8 @@ REPORT_CONTENT=$(cat <<EOF
 $DISK_INFO
 
 🌐 网络流量 (${NET_INTERFACE} 接口):
-⬇️ 下载速率: ${RX_RATE} KB/s
-⬆️ 上传速率: ${TX_RATE} KB/s
+⬇️ 下载速率: ${RX_RATE_TEXT}
+⬆️ 上传速率: ${TX_RATE_TEXT}
 
 🔥 Top 3 CPU 占用进程:
 $TOP_PROC

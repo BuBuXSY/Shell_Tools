@@ -61,6 +61,9 @@ usage() {
 
 环境变量:
   EXIT_ON_WARNING  🚦 设为 1 时，发现风险点后以状态码 1 退出；默认 0
+
+选项:
+  --interactive    🖱️  交互确认是否启用严格退出
 EOF
 }
 
@@ -81,6 +84,12 @@ has_cmd() {
 }
 
 validate() {
+    if [[ "${1:-}" == --interactive ]]; then
+        [[ $# -eq 1 && -t 0 ]] || { echo '交互模式需要终端' >&2; exit 2; }
+        read -r -p "发现风险时返回失败状态？[y/N] " choice || exit 2
+        [[ "$choice" == y || "$choice" == Y ]] && EXIT_ON_WARNING=1 || EXIT_ON_WARNING=0
+        return 0
+    fi
     case "$#" in
         0) ;;
         1)

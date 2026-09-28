@@ -61,6 +61,7 @@ ACME_SOURCE_DIR=""
 ACME_SH_VERSION="${ACME_SH_VERSION:-3.1.3}"
 ACME_SH_SHA256="${ACME_SH_SHA256:-}"
 NGINX_RELOAD_MODE=""
+PLAN_ONLY=0
 
 # Verify that the running Nginx configuration uses the files acme.sh just
 # installed.  A successful acme.sh install/reload alone is not sufficient:
@@ -95,7 +96,7 @@ show_help() {
     cat <<EOF
 SSL 证书自动化管理工具
 
-用法: $0 [--help]
+用法: $0 [--plan|--help]
 
 该工具使用交互式流程选择 CA、证书操作、域名和 DNS 验证方式。
 签发、续期和部署证书需要 root 权限。
@@ -103,6 +104,7 @@ SSL 证书自动化管理工具
 
 选项:
   -h, --help    显示帮助信息
+  --plan        只读检查现有证书、部署目录和 Nginx 配置
 EOF
 }
 
@@ -743,7 +745,7 @@ install_acme() {
             error_exit "覆盖 ACME_SH_VERSION 时必须同时提供 ACME_SH_SHA256"
         fi
     fi
-    ACME_SH_SHA256="${ACME_SH_SHA256,,}"
+    ACME_SH_SHA256=$(printf '%s' "$ACME_SH_SHA256" | tr '[:upper:]' '[:lower:]')
     [[ "$ACME_SH_SHA256" =~ ^[0-9a-f]{64}$ ]] \
         || error_exit "ACME_SH_SHA256 必须是 64 位十六进制摘要"
 
@@ -1201,12 +1203,37 @@ main() {
                 show_help
                 exit 0
                 ;;
+            --plan)
+                [[ $# -eq 1 ]] || { show_help >&2; exit 2; }
+                PLAN_ONLY=1
+                ;;
             *)
                 echo -e "${RED}${ERROR} 未知参数: $1${RESET}" >&2
                 show_help >&2
                 exit 2
                 ;;
         esac
+    fi
+
+    if [[ "$PLAN_ONLY" -eq 1 ]]; then
+        printf 'SSL 证书部署预览\n部署目录: %s\nacme.sh 主目录: %s\n' "$CERT_DIR" "$ACME_HOME"
+        if compgen -G "$CERT_DIR/*.fullchain.pem" >/dev/null; then
+            printf '本地证书: 已发现\n'
+        else
+            printf '本地证书: 未发现\n'
+        fi
+        if command -v nginx >/dev/null 2>&1; then
+            printf 'Nginx 配置: '; nginx -t >/dev/null 2>&1 && printf '通过\n' || printf '失败\n'
+        else
+            printf 'Nginx 配置: 未安装\n'
+        fi
+        printf '手动 DNS 模式不能无人值守续期；DNS API 模式才会创建自动续期任务。\n'
+        return 0
+    fi
+
+    if [[ "$(uname -s)" != Linux || -f /etc/openwrt_release ]]; then
+        printf '❌ 当前证书部署流程使用 Linux Nginx/包管理路径；macOS 可使用 brew install acme.sh，OpenWrt 可使用 opkg install acme。\n' >&2
+        return 1
     fi
 
     # 初始化

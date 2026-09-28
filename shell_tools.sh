@@ -26,20 +26,20 @@ SCRIPTS=(
     enhanced-doh-test.sh install_cert.sh kernel_optimization.sh
     nginx_access_analyzer.sh search_ip.sh server_security_audit.sh
     server_status_report.sh shell_tools_lint.sh ssl_cert_monitor.sh
-    system_config_backup.sh system_health_snapshot.sh update_Country.sh update_frp.sh
+    system_config_backup.sh system_health_snapshot.sh platform_check.sh update_Country.sh update_frp.sh
 )
 CATEGORIES=(
     system network inspect network system system inspect inspect inspect
-    inspect inspect inspect system inspect network system
+    inspect inspect inspect system inspect inspect network system
 )
 RISKS=(
-    change change read read change change read read read read read read change read change change
+    change change read read change change read read read read read read change read read change change
 )
 LABELS=(
     '升级 Nginx' '分析重复 DNS' '磁盘空间分析' 'DoH 节点测试'
     '申请/续期证书' '内核参数优化' 'Nginx 访问分析' '高频 IP 分析'
     '安全巡检' '服务器状态报告' '仓库自检' '证书有效期巡检'
-    '系统配置备份' '系统健康快照' '更新 GeoIP 数据库' 'FRP 安装/升级'
+    '系统配置备份' '系统健康快照' '平台适配检查' '更新 GeoIP 数据库' 'FRP 安装/升级'
 )
 
 usage() {
@@ -125,6 +125,10 @@ configure_command() {
             value=$(read_value '格式 (text/json)' text) || return 1
             [[ "$value" == text || "$value" == json ]] || return 2
             CMD+=(--format "$value") ;;
+        platform_check.sh)
+            value=$(read_value '格式 (text/json)' text) || return 1
+            [[ "$value" == text || "$value" == json ]] || return 2
+            [[ "$value" == json ]] && CMD+=(--json) ;;
         update_Country.sh) ;;
         update_frp.sh)
             value=$(read_value '操作 (install/update/uninstall)' update) || return 1
@@ -163,7 +167,17 @@ run_selected() {
         [[ "$answer" == y || "$answer" == Y ]] || return 0
     fi
     status=0
-    env "${ENV_ARGS[@]}" "${CMD[@]}" || status=$?
+    if [[ "${SCRIPTS[$i]}" == shell_tools_lint.sh ]] && declare -F st_ui_spinner >/dev/null; then
+        local capture_file spinner_pid
+        capture_file=$(mktemp "${TMPDIR:-/tmp}/shell-tools-menu.XXXXXX") || return 1
+        env "${ENV_ARGS[@]}" "${CMD[@]}" > "$capture_file" 2>&1 &
+        spinner_pid=$!
+        st_ui_spinner "$spinner_pid" '正在检查仓库' || status=$?
+        sed -n '1,$p' "$capture_file"
+        rm -f -- "$capture_file"
+    else
+        env "${ENV_ARGS[@]}" "${CMD[@]}" || status=$?
+    fi
     printf '\n退出状态: %s\n' "$status"
     read -r -p '按 Enter 返回工具台...' answer || true
 }

@@ -72,6 +72,14 @@ usage() {
   ./nginx_access_analyzer.sh
   LOG_FILE=/var/log/nginx/access.log TOP_N=20 ./nginx_access_analyzer.sh
 
+选项:
+  --log-file FILE    指定访问日志
+  --top N            Top 排名数量
+  --window MIN       最近 N 分钟（0 为全部）
+  --bucket MIN       N 分钟时间桶（0 为关闭）
+  --no-push          仅本地分析
+  --interactive      交互设置日志和时间窗口
+
 环境变量:
   LOG_FILE          📄 Nginx access.log 路径，默认 /var/log/nginx/access.log
   TOP_N             🔢 Top 列表数量，默认 10
@@ -115,23 +123,30 @@ prepare_report() {
 }
 
 validate() {
-    case "$#" in
-        0) ;;
-        1)
-            if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-                usage
-                exit 0
-            fi
-            error "未知参数：$1"
-            usage >&2
-            exit 2
-            ;;
-        *)
-            error "参数过多，本脚本通过环境变量接收配置"
-            usage >&2
-            exit 2
-            ;;
-    esac
+    while (($#)); do
+        case "$1" in
+            -h|--help) usage; exit 0 ;;
+            --log-file|--top|--window|--bucket)
+                [[ $# -ge 2 && -n "$2" ]] || { error "$1 缺少值"; exit 2; }
+                case "$1" in
+                    --log-file) LOG_FILE=$2 ;;
+                    --top) TOP_N=$2 ;;
+                    --window) WINDOW_MINUTES=$2 ;;
+                    --bucket) BUCKET_MINUTES=$2 ;;
+                esac
+                shift 2 ;;
+            --no-push) WEBHOOK_URL=''; shift ;;
+            --interactive)
+                [[ -t 0 ]] || { error "交互模式需要终端"; exit 2; }
+                local choice
+                read -r -p "访问日志 [$LOG_FILE]: " choice || exit 2
+                LOG_FILE=${choice:-$LOG_FILE}
+                read -r -p "最近分钟数 [$WINDOW_MINUTES]: " choice || exit 2
+                WINDOW_MINUTES=${choice:-$WINDOW_MINUTES}
+                shift ;;
+            *) error "未知参数：$1"; usage >&2; exit 2 ;;
+        esac
+    done
 
     if [[ ! -f "$LOG_FILE" ]]; then
         error "日志文件不存在：$LOG_FILE"
@@ -173,7 +188,8 @@ snapshot_log() {
     fi
     if (( WINDOW_MINUTES > 0 )); then
         local cutoff
-        cutoff=$(date -d "-${WINDOW_MINUTES} minutes" +%s 2>/dev/null) || { error "无法计算时间窗口"; exit 1; }
+        cutoff=$(date -d "-${WINDOW_MINUTES} minutes" +%s 2>/dev/null \
+            || date -v-"${WINDOW_MINUTES}"M +%s 2>/dev/null) || { error "无法计算时间窗口"; exit 1; }
         perl -MTime::Piece -e 'my $cutoff = shift; while (<>) { if (/\[([^]]+)\]/) { my $epoch = eval { Time::Piece->strptime($1, "%d/%b/%Y:%H:%M:%S %z")->epoch }; print if defined $epoch && $epoch >= $cutoff; } }' "$cutoff" "$SAMPLE_FILE" > "$SAMPLE_FILE.window" || { error "无法按时间窗口筛选日志"; exit 1; }
         mv -- "$SAMPLE_FILE.window" "$SAMPLE_FILE"
     fi
@@ -194,7 +210,7 @@ show_time_buckets() {
     (( BUCKET_MINUTES > 0 )) || return 0
     section "时间桶请求量"
     local output
-    output=$(perl -MTime::Piece -e 'my $minutes = shift; my %count; while (<>) { if (/\[([^]]+)\]/) { my $epoch = eval { Time::Piece->strptime($1, "%d/%b/%Y:%H:%M:%S %z")->epoch }; $count{int($epoch / ($minutes * 60)) * $minutes * 60}++ if defined $epoch; } } print "$_ $count{$_}\n" for sort { $a <=> $b } keys %count' "$BUCKET_MINUTES" "$SAMPLE_FILE" | while read -r bucket count; do printf "   %s %s 次\n" "$(date -d "@$bucket" '+%F %H:%M' 2>/dev/null || printf '%s' "$bucket")" "$count"; done)
+    output=$(perl -MTime::Piece -e 'my $minutes = shift; my %count; while (<>) { if (/\[([^]]+)\]/) { my $epoch = eval { Time::Piece->strptime($1, "%d/%b/%Y:%H:%M:%S %z")->epoch }; $count{int($epoch / ($minutes * 60)) * $minutes * 60}++ if defined $epoch; } } print "$_ $count{$_}\n" for sort { $a <=> $b } keys %count' "$BUCKET_MINUTES" "$SAMPLE_FILE" | while read -r bucket count; do printf "   %s %s 次\n" "$(date -d "@$bucket" '+%F %H:%M' 2>/dev/null || date -r "$bucket" '+%F %H:%M' 2>/dev/null || printf '%s' "$bucket")" "$count"; done)
     [[ -n "$output" ]] && printf '%s\n' "$output" | tee -a "$REPORT_FILE" || warn "未解析到可用于时间桶的 Nginx 时间戳"
 }
 

@@ -33,3 +33,18 @@ st_step() { st_ui_emit "$ST_UI_MAGENTA" STEP "$1"; }
 st_ok() { st_ui_emit "$ST_UI_GREEN" OK "$1"; }
 st_warn() { st_ui_emit "$ST_UI_YELLOW" WARN "$1"; }
 st_error() { st_ui_emit "$ST_UI_RED" ERROR "$1"; }
+
+# Optional terminal animation. It only runs on a TTY and never pollutes JSON/CSV
+# stdout, so cron and pipeline users keep deterministic output.
+st_ui_spinner() {
+    local pid="$1" label="${2:-处理中}" frames='|/-\' i=0
+    [[ -t 2 ]] || { wait "$pid"; return $?; }
+    while kill -0 "$pid" 2>/dev/null; do
+        printf '\r%b[%s] %s%b' "$ST_UI_MAGENTA" "${frames:i++%${#frames}:1}" "$label" "$ST_UI_RESET" >&2
+        sleep 0.08
+    done
+    local status=0
+    wait "$pid" || status=$?
+    printf '\r%*s\r' "$((${#label} + 12))" '' >&2
+    return "$status"
+}

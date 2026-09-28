@@ -49,6 +49,7 @@ TEMP_ARCHIVE=""
 BACKED_UP=0
 COPY_FAILURES=0
 CLEANUP_FAILURES=0
+PLAN_ONLY=0
 
 usage() {
     cat <<EOF
@@ -58,6 +59,7 @@ usage() {
   sudo ./system_config_backup.sh
   BACKUP_DIR=/root/backups ./system_config_backup.sh
   EXTRA_PATHS="/etc/x-ui /opt/app/config.yml" ./system_config_backup.sh
+  ./system_config_backup.sh --plan
 
 环境变量:
   BACKUP_DIR   📁 备份输出目录，默认 /var/backups/shell_tools
@@ -93,10 +95,13 @@ prepare() {
             if [[ "$1" == "-h" || "$1" == "--help" ]]; then
                 usage
                 exit 0
+            elif [[ "$1" == "--plan" ]]; then
+                PLAN_ONLY=1
+            else
+                log_error "未知参数：$1"
+                usage >&2
+                exit 2
             fi
-            log_error "未知参数：$1"
-            usage >&2
-            exit 2
             ;;
         *)
             log_error "参数过多，本脚本通过环境变量接收配置"
@@ -113,6 +118,8 @@ prepare() {
         log_error "KEEP_DAYS 必须是大于等于 0 的整数"
         exit 2
     fi
+
+    [[ "$PLAN_ONLY" -eq 0 ]] || return 0
 
     local cmd
     for cmd in mkdir mktemp cp tar find dirname date hostname readlink ln; do
@@ -330,6 +337,17 @@ cleanup_old_backups() {
 
 main() {
     prepare "$@"
+    if [[ "$PLAN_ONLY" -eq 1 ]]; then
+        printf '配置备份预览\n输出目录: %s\n保留天数: %s\n' "$BACKUP_DIR" "$KEEP_DAYS"
+        printf '默认路径: /etc/nginx /etc/ssh /etc/sysctl.d /etc/security /etc/fail2ban /etc/cron.d /etc/systemd/system /etc/mosdns /etc/x-ui\n'
+        printf '额外路径: %s\n' "${EXTRA_PATHS:-无}"
+        printf '正式运行将创建压缩包并清理超过保留天数的本机旧备份。\n'
+        return 0
+    fi
+    if [[ "$(uname -s)" == Darwin ]]; then
+        log_error "默认备份清单使用 Linux 配置路径；macOS 请使用 Time Machine 或按需使用 tar。"
+        return 1
+    fi
     banner
     log_info "📁 备份目录：$BACKUP_DIR"
     collect_configs

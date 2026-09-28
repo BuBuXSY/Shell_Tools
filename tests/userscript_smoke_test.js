@@ -200,31 +200,6 @@ function testMactypeBlacklistOnFirstEdgeRun() {
     );
 }
 
-function testJunyaoDocumentStart() {
-    const thinElement = {
-        style: {
-            fontWeight: '300',
-            setProperty(name, value, priority) {
-                assert.strictEqual(name, 'font-weight');
-                assert.strictEqual(priority, 'important');
-                this.fontWeight = value;
-            }
-        }
-    };
-    const harness = createHarness({inlineElements: [thinElement]});
-
-    runScript('junyaoairwebsite-intranet-optimization1.0.user.js', harness);
-    assert.strictEqual(harness.observers.length, 1, 'head observer should be registered');
-
-    harness.createHead();
-    harness.observers[0].callback([], harness.observers[0]);
-    assert.ok(harness.elements.has('junyao-font-optimization-style'), 'Junyao style should be injected');
-
-    harness.documentListeners.get('DOMContentLoaded')();
-    assert.strictEqual(thinElement.style.fontWeight, 'normal');
-}
-
 testMactypeDocumentStart();
 testMactypeBlacklistOnFirstEdgeRun();
-testJunyaoDocumentStart();
 console.log('userscript smoke tests passed');

@@ -1,10 +1,10 @@
 # 🚀 Shell_Tools 脚本工具箱
 
-> 🎯 集中管理 Linux 运维、网络诊断、Nginx、SSL、FRP、GeoIP 与浏览器字体优化工具。
+> 🎯 集中管理 Linux、macOS、OpenWrt 运维、网络诊断、Nginx、SSL、FRP、GeoIP 与浏览器字体工具。
 
 [![Shell Tools Lint](https://github.com/BuBuXSY/Shell_Tools/actions/workflows/shell-tools-lint.yml/badge.svg)](https://github.com/BuBuXSY/Shell_Tools/actions/workflows/shell-tools-lint.yml)
 [![Tools](https://img.shields.io/badge/工具数量-19-blue.svg)](README.md)
-[![Platform](https://img.shields.io/badge/平台-Linux%20%7C%20OpenWrt%20%7C%20Edge-green.svg)](README.md)
+[![Platform](https://img.shields.io/badge/平台-Linux%20%7C%20macOS%20%7C%20OpenWrt-green.svg)](README.md)
 [![License](https://img.shields.io/badge/许可证-MIT-orange.svg)](LICENSE)
 [![Security Policy](https://img.shields.io/badge/security-policy-brightgreen.svg)](SECURITY.md)
 
@@ -12,7 +12,7 @@
 
 | 🔧 文件 | 🎯 用途 | ⚠️ 运行特性 |
 | --- | --- | --- |
-| `shell_tools.sh` | 🧰 统一交互式工具台 | 16 个 Shell 工具分类、参数预览、修改确认 |
+| `shell_tools.sh` | 🧰 统一交互式工具台 | 17 个 Shell 工具分类、参数预览、修改确认 |
 | `Auto_Upgrade_Nginx.sh` | 🌐 源码编译安装 / 升级 Nginx | root；官方验签；失败事务回滚 |
 | `collect_repeat_dns.sh` | 🧠 分析 mosdns 重复查询域名 | 纯文本配置；原子更新规则；单实例锁；不清空源日志 |
 | `disk_usage_analyzer.sh` | 💽 磁盘空间占用分析 | 只读；支持多目录 |
@@ -27,19 +27,26 @@
 | `ssl_cert_monitor.sh` | 🔐 SSL 证书有效期巡检 | GNU / BSD 日期兼容 |
 | `system_config_backup.sh` | 💾 系统关键配置备份 | 权限 `600`；SHA-256 校验 |
 | `system_health_snapshot.sh` | 🩺 系统健康快照 | 只读；text / JSON；可选严格模式 |
+| `platform_check.sh` | 🧭 平台适配检查 | 识别 Linux / macOS / OpenWrt、包管理器与服务管理器 |
 | `update_Country.sh` | 🌏 更新 GeoIP Country.mmdb | 条件下载；原子替换 |
 | `update_frp.sh` | 🚇 安装、更新、卸载 FRP | OpenWrt / Linux；首装不启动 |
 | `Mactype助手增强版 (Edge优化)-1.0.0.user.js` | ✨ Edge 字体渲染增强 | Tampermonkey / Violentmonkey |
-| `junyaoairwebsite-intranet-optimization1.0.user.js` | 🛫 吉祥航空内网页面字体优化 | `document-start` 安全注入 |
 | `VPS_nginx_CDN_伪装网址.conf` | 🧱 HTTPS 伪装与反向代理模板 | 使用前替换域名、证书和端口 |
 
 ## ⚡ 快速开始
+
+<p align="center">
+  <img src="assets/shell-tools-wave.svg" alt="Shell Tools animated terminal wave" width="100%" />
+</p>
+
+> ✨ **酷炫但不打扰自动化**：终端模式可以显示 spinner、步骤条和颜色；JSON/CSV、cron、管道输出保持干净，动画只写入 stderr。GitHub 会播放上方 SVG 的波形动画，旧版客户端仍可看到静态标题。
 
 ```bash
 git clone https://github.com/BuBuXSY/Shell_Tools.git
 cd Shell_Tools
 chmod +x ./*.sh
 ./shell_tools_lint.sh
+./platform_check.sh
 ```
 
 交互式工具台会按系统、网络和只读巡检分类展示所有 Shell 脚本；有修改作用的命令会显示预览并要求确认：
@@ -57,6 +64,42 @@ chmod +x ./*.sh
 ```
 
 ## 🛠️ 常用命令
+
+### 🧭 先识别平台
+
+```bash
+./platform_check.sh
+./platform_check.sh --json | jq .
+```
+
+| 平台 | 自动适配 | 需要人工确认 |
+| --- | --- | --- |
+| 🐧 Linux | `/proc`、systemd/发行版包管理器、Nginx/FRP 服务路径 | 内核调优和系统写入仍需 root |
+| 🍎 macOS | BSD `date`、`df`、`find`、`sysctl/vm_stat`、Homebrew 检测 | Linux 专属 systemd/内核/Nginx 部署脚本会先拒绝并给替代建议 |
+| 📡 OpenWrt | BusyBox ash、opkg、procd、FRP 原生服务路径 | Linux systemd、apt 和固定 `/etc` 目录脚本不会强行执行 |
+
+### 🎛️ 预览与交互
+
+系统变更脚本都提供预览入口，适合先审阅再执行：
+
+```bash
+./Auto_Upgrade_Nginx.sh --plan
+./kernel_optimization.sh --scene vps --plan
+./install_cert.sh --plan
+./system_config_backup.sh --plan
+./update_frp.sh --action install --role frpc --plan
+./update_Country.sh --status
+```
+
+分析脚本支持直接参数和交互模式：
+
+```bash
+./disk_usage_analyzer.sh --target /var/log --top 20 --depth 2
+./nginx_access_analyzer.sh --log-file /var/log/nginx/access.log --window 60 --no-push
+./enhanced-doh-test.sh --interactive
+./ssl_cert_monitor.sh --interactive
+./system_health_snapshot.sh --interactive
+```
 
 ### 系统变更类
 
@@ -126,6 +169,18 @@ LOG_FILE=/var/log/nginx/access.log WINDOW_MINUTES=60 BUCKET_MINUTES=15 ./nginx_a
 新增工具使用低噪声 NOC 风格状态标签。`COLOR_MODE=auto`（默认）仅在 stderr 为 TTY、未设置 `NO_COLOR` 且 `TERM` 不是 `dumb` 时启用 ANSI；`COLOR_MODE=never`（或支持的工具的 `--no-color`）始终禁用 ANSI；`COLOR_MODE=always` 始终启用 ANSI，并优先于 `NO_COLOR` 与 `TERM=dumb`。机器可读的 JSON / CSV 始终仅写入 stdout；人类状态信息写入 stderr。
 
 公共 UI 辅助库仅为可选展示层：所有工具保留独立可下载运行能力，库缺失时会安全降级，不会阻止只读功能运行。
+
+## 🧪 和同类 GitHub Shell 项目的差异
+
+参考 [testssl.sh](https://github.com/testssl/testssl.sh)（TLS 深度检测）、[Bash-it](https://github.com/Bash-it/bash-it)（Shell 扩展框架）和 [bashtop](https://github.com/aristocratos/bashtop)（Linux/macOS/FreeBSD 资源监控）的公开项目定位，本项目还需要持续补强的方向是：
+
+- 🧩 更完整的跨平台 CI：现有 GitHub Actions 在 Ubuntu 和 macOS 运行同一套自检；OpenWrt 的 procd/opkg 实机验证仍需补充，不能把 Linux 测试当作 OpenWrt 实测。
+- 📦 可安装分发：目前是可直接复制的独立脚本，后续可提供 Homebrew tap、OpenWrt package 和 release tarball。
+- 🔐 签名发布：下载校验已覆盖多个更新脚本，后续可增加 release checksum 签名和 SBOM。
+- 🧪 更广的行为矩阵：当前有 Bats、ShellCheck、userscript 冒烟测试，后续可为每个写入类脚本加入临时根目录事务测试。
+- 🧭 运行时诊断：新增 `platform_check.sh`，后续可把依赖缺失、权限、代理和服务管理器状态统一输出为 JSON。
+
+这些项目提供了很好的参考：`testssl.sh` 强调跨平台和机器可读输出，`Bash-it` 强调模块化与可安装性，`bashtop` 强调 Linux/macOS/FreeBSD 兼容；Shell_Tools 当前定位则是安全的运维变更、巡检和更新闭环。
 
 ## ⚙️ 配置方式
 
@@ -206,13 +261,11 @@ sudo nginx -t -c /path/to/VPS_nginx_CDN_伪装网址.conf
 
 ## 🧩 Userscript
 
-两个 `.user.js` 文件可通过 Tampermonkey 或 Violentmonkey 安装。当前实现处理了：
+`.user.js` 文件可通过 Tampermonkey 或 Violentmonkey 安装。当前实现处理了：
 
 - `document-start` 阶段 `<head>` 尚未创建的情况。
 - Edge 首次运行和快捷预设未打开设置面板时的空节点访问。
 - DPI 变化检测、字间距关闭后的无效 CSS，以及关闭设置时恢复未保存预览。
-- 吉祥航空页面内联字体权重检查由全 DOM 扫描收窄为仅扫描含 `style` 的元素。
-- 吉祥航空字体脚本增加 Tampermonkey 菜单开关，状态持久化保存，暂停后不注入样式并自动刷新页面。
 
 ## 🧪 开发与验证
 
@@ -221,6 +274,7 @@ sudo nginx -t -c /path/to/VPS_nginx_CDN_伪装网址.conf
 ```bash
 sudo apt-get install bats shellcheck
 ./shell_tools_lint.sh
+./shell_tools_lint.sh --static-only
 shellcheck --severity=warning ./*.sh lib/*.sh
 bats tests/*.bats
 node ./tests/userscript_smoke_test.js
@@ -245,10 +299,13 @@ GitHub Actions 会安装 Bats 与 ShellCheck 后执行同一套检查。未安�
 
 ## 🧭 兼容性
 
-- Shell 工具主要面向 Linux；`update_frp.sh` 额外兼容 OpenWrt BusyBox `ash`。
-- `kernel_optimization.sh` 支持 VPS、低配 VPS、旁路由、主路由、单板机和裸机场景。
-- `ssl_cert_monitor.sh` 兼容 GNU 与 BSD 风格 `date`。
-- `search_ip.sh` 如需显示 IP 归属地，建议安装 `nali`。
+- 只读巡检、磁盘分析、DoH 测试、证书巡检、平台探针和多数日志工具支持 Linux / macOS / OpenWrt 的可用子集。
+- `update_frp.sh` 支持 Linux 服务管理和 OpenWrt BusyBox `ash` / procd；macOS 会给出 launchd/Homebrew 替代建议。
+- `system_health_snapshot.sh` 在 Linux 使用 `/proc`，在 macOS 使用 `sysctl` / `vm_stat`，在精简 OpenWrt 上对缺失数据报告告警而不伪造数值。
+- `ssl_cert_monitor.sh` 兼容 GNU 与 BSD 风格 `date`，证书搜索按平台选择 `find -xdev` 或 BSD 可用参数。
+- `disk_usage_analyzer.sh` 提供 GNU `find -printf` 的 `wc` 回退；`server_status_report.sh` 提供 Linux `/sys` 和 macOS 路由/内存回退。
+- `kernel_optimization.sh`、`Auto_Upgrade_Nginx.sh`、`install_cert.sh`、`update_Country.sh` 的写入路径面向 Linux；在 macOS/OpenWrt 会先拒绝并给出平台替代方案。
+- `search_ip.sh` 如需显示 IP 归属地，建议安装 `nali`；不安装时仍输出频次分析。
 
 ## 📜 License
 
