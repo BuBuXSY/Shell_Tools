@@ -79,8 +79,8 @@ verify_nginx_certificate_deployment() {
         error_exit "无法读取 Nginx 活动配置，证书已写入但未确认生效"
     fi
 
-    if ! grep -Fq "ssl_certificate $cert_file" <<< "$nginx_config" \
-        || ! grep -Fq "ssl_certificate_key $key_file" <<< "$nginx_config"; then
+    if ! awk -v expected="$cert_file;" '$1 == "ssl_certificate" && $2 == expected { found = 1 } END { exit !found }' <<< "$nginx_config" \
+        || ! awk -v expected="$key_file;" '$1 == "ssl_certificate_key" && $2 == expected { found = 1 } END { exit !found }' <<< "$nginx_config"; then
         log "ERROR" "Nginx 活动配置没有引用刚部署的证书"
         log "INFO" "期望证书: $cert_file"
         log "INFO" "期望私钥: $key_file"
@@ -1282,4 +1282,6 @@ trap cleanup EXIT
 trap 'error_exit "脚本被中断"' INT TERM
 
 # 执行主函数
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi
