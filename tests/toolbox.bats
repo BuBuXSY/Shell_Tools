@@ -22,6 +22,11 @@ setup() {
     run "$REPO_ROOT/shell_tools.sh" --dashboard --format json
     [ "$status" -eq 0 ]
     node -e 'const v=JSON.parse(process.argv[1]); if(typeof v.health_score!=="number"||!v.kernel)process.exit(1)' "$output"
+    run "$REPO_ROOT/shell_tools.sh" --dashboard --format markdown
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"| 指标 | 当前值 |"* ]]
+    run "$REPO_ROOT/shell_tools.sh" --watch 2
+    [ "$status" -eq 2 ]
 }
 
 @test "toolbox rejects unregistered scripts" {

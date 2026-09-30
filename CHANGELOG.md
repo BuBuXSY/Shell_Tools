@@ -1,5 +1,7 @@
 # Changelog
 
+- Dashboard now supports Markdown output for README/status pages and an interactive `--watch` refresh mode while preserving JSON automation output.
+
 - Shell_Tools dashboard now supports `--dashboard` text output and `--dashboard --format json` for monitoring integrations, with health score, load, memory, root disk, kernel, and module count.
 
 - Expanded Shell_Tools to 23 modules with a dashboard, performance benchmark, router diagnostics, Shell security scan, self-heal recommendations, and SSH read-only inspection. New modules support preview or read-only operation and emoji-rich terminal output.

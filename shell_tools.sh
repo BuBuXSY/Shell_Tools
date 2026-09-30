@@ -53,7 +53,8 @@ usage() {
 用法:
   ./shell_tools.sh                    打开交互式工具台（需要终端）
   ./shell_tools.sh --list             列出全部工具
-  ./shell_tools.sh --dashboard [--format json]  查看健康总览
+  ./shell_tools.sh --dashboard [--format text|json|markdown]  查看健康总览
+  ./shell_tools.sh --watch [秒数]                实时刷新仪表盘
   ./shell_tools.sh --run SCRIPT -- [ARGS...]
   ./shell_tools.sh --help
 
@@ -105,6 +106,29 @@ dashboard_json() {
     [[ "$disk_num" =~ ^[0-9]+$ && "$disk_num" -ge 90 ]] && score=$((score-25))
     printf '{"health_score":%s,"load":"%s","memory_available_mb":%s,"root_disk":"%s","kernel":"%s","modules":%s}\n' \
         "$score" "$load" "${mem:-0}" "$disk" "$kernel" "${#SCRIPTS[@]}"
+}
+
+dashboard_markdown() {
+    local load mem disk kernel score=100 disk_num
+    load=$(awk '{print $1}' /proc/loadavg 2>/dev/null || echo unknown)
+    mem=$(awk '/MemAvailable/{printf "%d", $2/1024; exit}' /proc/meminfo 2>/dev/null || echo 0)
+    disk=$(df -P / 2>/dev/null | awk 'NR==2{print $5; exit}' || echo unknown)
+    kernel=$(uname -r 2>/dev/null || echo unknown)
+    disk_num=${disk%%%}
+    [[ "$disk_num" =~ ^[0-9]+$ && "$disk_num" -ge 90 ]] && score=$((score-25))
+    printf '| 指标 | 当前值 |\n| --- | --- |\n| 💚 健康评分 | %s/100 |\n| 🧠 负载 | %s |\n| 💾 可用内存 | %s MB |\n| 💽 根分区 | %s |\n| 🐧 内核 | `%s` |\n| 🧰 工具模块 | %s |\n' "$score" "$load" "$mem" "$disk" "$kernel" "${#SCRIPTS[@]}"
+}
+
+watch_dashboard() {
+    local interval="${1:-2}"
+    [[ "$interval" =~ ^[1-9][0-9]*$ ]] || { printf '刷新间隔必须是正整数秒\n' >&2; return 2; }
+    [[ -t 1 ]] || { printf '--watch 需要终端；可使用 --dashboard --format json 做自动化采集。\n' >&2; return 2; }
+    while :; do
+        printf '\033[H\033[2J'
+        dashboard
+        printf '\n%s⏱️ 每 %ss 刷新；按 Ctrl-C 退出%s\n' "$ST_UI_YELLOW" "$interval" "$ST_UI_RESET"
+        sleep "$interval"
+    done
 }
 
 read_value() {
@@ -276,11 +300,15 @@ main() {
             [[ $# -le 3 ]] || { usage >&2; return 2; }
             if [[ "${2:-}" == --format ]]; then
                 dashboard_format="${3:-}"
-                [[ "$dashboard_format" == text || "$dashboard_format" == json ]] || { printf '无效输出格式: %s\n' "$dashboard_format" >&2; return 2; }
+                [[ "$dashboard_format" == text || "$dashboard_format" == json || "$dashboard_format" == markdown ]] || { printf '无效输出格式: %s\n' "$dashboard_format" >&2; return 2; }
             elif [[ -n "${2:-}" ]]; then
                 usage >&2; return 2
             fi
-            if [[ "$dashboard_format" == json ]]; then dashboard_json; else dashboard; fi
+            if [[ "$dashboard_format" == json ]]; then dashboard_json; elif [[ "$dashboard_format" == markdown ]]; then dashboard_markdown; else dashboard; fi
+            ;;
+        --watch)
+            [[ $# -le 2 ]] || { usage >&2; return 2; }
+            watch_dashboard "${2:-2}"
             ;;
         --run)
             [[ $# -ge 2 ]] || { usage >&2; return 2; }

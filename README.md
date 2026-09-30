@@ -47,6 +47,34 @@
 
 > ✨ **酷炫但不打扰自动化**：终端模式可以显示 spinner、步骤条和颜色；JSON/CSV、cron、管道输出保持干净，动画只写入 stderr。GitHub 会播放上方 SVG 的波形动画，旧版客户端仍可看到静态标题。
 
+### 📡 实时主机状态
+
+README 中的状态表可以随当前主机刷新，不需要手工改数字：
+
+```bash
+./shell_tools.sh --dashboard --format markdown
+./shell_tools.sh --dashboard --format json | jq '{score: .health_score, load: .load, memory_mb: .memory_available_mb, disk: .root_disk}'
+```
+
+交互终端可使用实时模式：
+
+```bash
+./shell_tools.sh --watch 2
+```
+
+示例输出：
+
+| 指标 | 当前值 |
+| --- | --- |
+| 💚 健康评分 | 100/100 |
+| 🧠 负载 | 0.20 |
+| 💾 可用内存 | 1024 MB |
+| 💽 根分区 | 42% |
+| 🐧 内核 | `6.x` |
+| 🧰 工具模块 | 23 |
+
+> 💡 示例数值仅用于展示格式；执行命令即可获得当前机器的实时数据。
+
 ```bash
 git clone https://github.com/BuBuXSY/Shell_Tools.git
 cd Shell_Tools
@@ -63,6 +91,8 @@ chmod +x ./*.sh
 ./shell_tools.sh --list
 ./shell_tools.sh --dashboard
 ./shell_tools.sh --dashboard --format json | jq .
+./shell_tools.sh --dashboard --format markdown
+./shell_tools.sh --watch 2
 ./shell_tools.sh --run system_health_snapshot.sh -- --format json
 ```
 
