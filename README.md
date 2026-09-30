@@ -98,6 +98,8 @@ chmod +x ./*.sh
 # 资源故障诊断与性能评分
 ./system_self_heal.sh --format json | jq .
 ./server_benchmark.sh --format json | jq .
+./router_diagnostics.sh --format json | jq '{severity, recommendation, forwarding: .ipv4_forwarding}'
+./remote_inspection.sh --host user@example.com --format json
 ```
 
 查看任一脚本的参数：

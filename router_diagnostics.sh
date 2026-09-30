@@ -21,6 +21,10 @@ fwd=$(sysctl -n net.ipv4.ip_forward 2>/dev/null || echo unknown)
 fwd6=$(sysctl -n net.ipv6.conf.all.forwarding 2>/dev/null || echo unknown)
 ct=$(sysctl -n net.netfilter.nf_conntrack_count 2>/dev/null || echo unavailable)
 ctm=$(sysctl -n net.netfilter.nf_conntrack_max 2>/dev/null || echo unavailable)
-route=$(ip route show default 2>/dev/null | head -n1 || echo unavailable)
-mtu=$(ip route get 1.1.1.1 2>/dev/null | sed -n 's/.* mtu \([0-9]*\).*/\1/p' | head -n1); mtu=${mtu:-unknown}
-if [[ "$format" == json ]]; then printf '{"ipv4_forwarding":"%s","ipv6_forwarding":"%s","conntrack_count":"%s","conntrack_max":"%s","default_route":"%s","path_mtu":"%s"}\n' "$fwd" "$fwd6" "$ct" "$ctm" "$route" "$mtu"; else printf '🛜 软路由诊断 ✅\n🔀 IPv4 转发: %s\n🌐 IPv6 转发: %s\n🧱 conntrack: %s / %s\n🛣️ 默认路由: %s\n📦 路径 MTU: %s\n' "$fwd" "$fwd6" "$ct" "$ctm" "$route" "$mtu"; fi
+route=$(ip route show default 2>/dev/null | head -n1 || true); route=${route:-unavailable}
+mtu=$(ip route get 1.1.1.1 2>/dev/null | sed -n 's/.* mtu \([0-9]*\).*/\1/p' | head -n1 || true); mtu=${mtu:-unknown}
+severity=ok; recommendation='转发和网络基础状态未发现明显风险'
+if [[ "$fwd" != 1 ]]; then severity=warning; recommendation='IPv4 转发未开启；如果这是网关，请先确认 net.ipv4.ip_forward=1'; fi
+if [[ "$route" == unavailable || -z "$route" ]]; then severity=critical; recommendation='未检测到默认路由，请检查网卡、DHCP 或上游网关'; fi
+if [[ "$ct" =~ ^[0-9]+$ && "$ctm" =~ ^[0-9]+$ && "$ctm" -gt 0 && $((ct * 100 / ctm)) -ge 90 ]]; then severity=warning; recommendation='conntrack 使用率已超过 90%，建议提升上限并检查连接泄漏'; fi
+if [[ "$format" == json ]]; then printf '{"severity":"%s","ipv4_forwarding":"%s","ipv6_forwarding":"%s","conntrack_count":"%s","conntrack_max":"%s","default_route":"%s","path_mtu":"%s","recommendation":"%s"}\n' "$severity" "$fwd" "$fwd6" "$ct" "$ctm" "$route" "$mtu" "$recommendation"; else printf '🛜 软路由诊断 ✅\n🚦 风险等级: %s\n🔀 IPv4 转发: %s\n🌐 IPv6 转发: %s\n🧱 conntrack: %s / %s\n🛣️ 默认路由: %s\n📦 路径 MTU: %s\n🧭 建议: %s\n' "$severity" "$fwd" "$fwd6" "$ct" "$ctm" "$route" "$mtu" "$recommendation"; fi

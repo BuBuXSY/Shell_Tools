@@ -1,5 +1,7 @@
 # Changelog
 
+- Router diagnostics now classify risk and emit recommendations; remote inspection now supports per-host JSON records including connection failures.
+
 - Self-heal diagnostics now report severity, failed systemd service count, recommendations, and a JSON contract; server benchmarks now include a score and elapsed time.
 
 - Dashboard now supports Markdown output for README/status pages and an interactive `--watch` refresh mode while preserving JSON automation output.

@@ -29,6 +29,15 @@ setup() {
     [ "$status" -eq 2 ]
 }
 
+@test "network diagnostics expose structured read-only output" {
+    run "$REPO_ROOT/router_diagnostics.sh" --format json
+    [ "$status" -eq 0 ]
+    node -e 'const v=JSON.parse(process.argv[1]); if(!v.severity||!v.recommendation)process.exit(1)' "$output"
+    run "$REPO_ROOT/remote_inspection.sh" --host invalid.example --format json --plan
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"远程巡检预览"* ]]
+}
+
 @test "toolbox rejects unregistered scripts" {
     run "$REPO_ROOT/shell_tools.sh" --run ../install_cert.sh
     [ "$status" -eq 2 ]
