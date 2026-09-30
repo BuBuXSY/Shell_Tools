@@ -7,11 +7,12 @@ setup() {
 @test "toolbox lists every shell tool without executing it" {
     run "$REPO_ROOT/shell_tools.sh" --list
     [ "$status" -eq 0 ]
-    [ "${#lines[@]}" -eq 18 ]
+    [ "${#lines[@]}" -eq 23 ]
     [[ "$output" == *"install_cert.sh"* ]]
     [[ "$output" == *"system_health_snapshot.sh"* ]]
     [[ "$output" == *"platform_check.sh"* ]]
     [[ "$output" == *"cleanup_junk.sh"* ]]
+    [[ "$output" == *"server_benchmark.sh"* ]]
 }
 
 @test "toolbox rejects unregistered scripts" {

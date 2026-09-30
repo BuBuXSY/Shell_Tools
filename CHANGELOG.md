@@ -1,5 +1,7 @@
 # Changelog
 
+- Expanded Shell_Tools to 23 modules with a dashboard, performance benchmark, router diagnostics, Shell security scan, self-heal recommendations, and SSH read-only inspection. New modules support preview or read-only operation and emoji-rich terminal output.
+
 - Kernel optimization adds a read-only `--status` inspection and scene-specific strategy details to `--plan`, so current capability and persisted configuration can be reviewed before mutation.
 - Kernel optimization now recommends a scene from hardware, provider, virtualization, memory, and routing signals while retaining manual selection; failed or degraded runs show actionable reasons and recovery paths before exit.
 

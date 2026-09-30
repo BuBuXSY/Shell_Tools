@@ -12,7 +12,12 @@
 
 | 🔧 文件 | 🎯 用途 | ⚠️ 运行特性 |
 | --- | --- | --- |
-| `shell_tools.sh` | 🧰 统一交互式工具台 | 17 个 Shell 工具分类、参数预览、修改确认 |
+| `shell_tools.sh` | 🧰 统一交互式工具台 | 23 个 Shell 工具分类、健康仪表盘、参数预览、修改确认 |
+| `server_benchmark.sh` | 🚀 性能基准测试 | 只读；text / JSON |
+| `router_diagnostics.sh` | 🛜 软路由诊断 | 只读；转发、conntrack、路由和 MTU |
+| `shell_security_scan.sh` | 🛡️ Shell 安全扫描 | 只读；危险模式提示 |
+| `system_self_heal.sh` | 🩹 故障自愈助手 | 只读诊断；生成修复建议 |
+| `remote_inspection.sh` | 🌐 远程巡检中心 | SSH 只读巡检；支持预览 |
 | `Auto_Upgrade_Nginx.sh` | 🌐 源码编译安装 / 升级 Nginx | root；官方验签；失败事务回滚 |
 | `collect_repeat_dns.sh` | 🧠 分析 mosdns 重复查询域名 | 纯文本配置；原子更新规则；单实例锁；不清空源日志 |
 | `disk_usage_analyzer.sh` | 💽 磁盘空间占用分析 | 只读；支持多目录 |

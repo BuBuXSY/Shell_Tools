@@ -27,19 +27,23 @@ SCRIPTS=(
     nginx_access_analyzer.sh search_ip.sh server_security_audit.sh
     server_status_report.sh shell_tools_lint.sh ssl_cert_monitor.sh
     system_config_backup.sh system_health_snapshot.sh platform_check.sh cleanup_junk.sh update_Country.sh update_frp.sh
+    server_benchmark.sh router_diagnostics.sh shell_security_scan.sh system_self_heal.sh remote_inspection.sh
 )
 CATEGORIES=(
     system network inspect network system system inspect inspect inspect
     inspect inspect inspect system inspect inspect system network system
+    inspect network inspect system network
 )
 RISKS=(
     change change read read change change read read read read read read change read read change change change
+    read read read read read
 )
 LABELS=(
     '升级 Nginx' '分析重复 DNS' '磁盘空间分析' 'DoH 节点测试'
     '申请/续期证书' '内核参数优化' 'Nginx 访问分析' '高频 IP 分析'
     '安全巡检' '服务器状态报告' '仓库自检' '证书有效期巡检'
     '系统配置备份' '系统健康快照' '平台适配检查' '垃圾缓存清理' '更新 GeoIP 数据库' 'FRP 安装/升级'
+    '性能基准测试' '软路由诊断' 'Shell 安全扫描' '故障自愈助手' '远程巡检中心'
 )
 
 usage() {
@@ -72,6 +76,22 @@ list_scripts() {
     for i in "${!SCRIPTS[@]}"; do
         printf '%s\t%s\t%s\t%s\n' "${CATEGORIES[$i]}" "${RISKS[$i]}" "${SCRIPTS[$i]}" "${LABELS[$i]}"
     done
+}
+
+dashboard() {
+    local load mem disk kernel score=100
+    load=$(awk '{print $1}' /proc/loadavg 2>/dev/null || echo '?')
+    mem=$(awk '/MemAvailable/{printf "%d", $2/1024; exit}' /proc/meminfo 2>/dev/null || echo '?')
+    disk=$(df -P / 2>/dev/null | awk 'NR==2{print $5; exit}' || echo '?')
+    kernel=$(uname -r 2>/dev/null || echo '?')
+    [[ "$disk" =~ ^([89][0-9]|100)%$ ]] && score=$((score-25))
+    printf '\n%s╔══════════════════════════════════════════════════════╗%s\n' "$ST_UI_CYAN$ST_UI_BOLD" "$ST_UI_RESET"
+    printf '%s║ 🚀  Shell_Tools 超级运维控制台                    ║%s\n' "$ST_UI_CYAN$ST_UI_BOLD" "$ST_UI_RESET"
+    printf '%s╠══════════════════════════════════════════════════════╣%s\n' "$ST_UI_CYAN" "$ST_UI_RESET"
+    printf '║ 🧠 负载 %-8s 💾 可用内存 %-8s 💽 根盘 %-8s ║\n' "$load" "${mem}MB" "$disk"
+    printf '║ 🐧 内核 %-42s ║\n' "$kernel"
+    printf '║ 💚 健康评分 %-3s/100   🧰 工具模块 %-3s 个          ║\n' "$score" "${#SCRIPTS[@]}"
+    printf '%s╚══════════════════════════════════════════════════════╝%s\n' "$ST_UI_CYAN" "$ST_UI_RESET"
 }
 
 read_value() {
@@ -141,6 +161,14 @@ configure_command() {
             value=$(read_value '角色 (frpc/frps)' frpc) || return 1
             [[ "$value" == frpc || "$value" == frps ]] || return 2
             CMD+=(--role "$value") ;;
+        server_benchmark.sh) CMD+=(--format text) ;;
+        router_diagnostics.sh) CMD+=(--format text) ;;
+        shell_security_scan.sh) CMD+=("$SCRIPT_DIR" --format text) ;;
+        system_self_heal.sh) CMD+=(--plan) ;;
+        remote_inspection.sh)
+            value=$(read_value '目标（user@host，逗号分隔）' '') || return 1
+            [[ -n "$value" ]] || return 2
+            CMD+=(--host "$value" --plan) ;;
     esac
 }
 
@@ -193,6 +221,7 @@ interactive_menu() {
         return 2
     fi
     while :; do
+        dashboard
         printf '\n%s%sShell_Tools 工具台%s  分类: %s\n' "$ST_UI_CYAN" "$ST_UI_BOLD" "$ST_UI_RESET" "$filter"
         printf '序号  类型  工具 / 脚本\n'
         visible=()
