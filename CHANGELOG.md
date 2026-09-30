@@ -1,5 +1,7 @@
 # Changelog
 
+- Shell_Tools dashboard now supports `--dashboard` text output and `--dashboard --format json` for monitoring integrations, with health score, load, memory, root disk, kernel, and module count.
+
 - Expanded Shell_Tools to 23 modules with a dashboard, performance benchmark, router diagnostics, Shell security scan, self-heal recommendations, and SSH read-only inspection. New modules support preview or read-only operation and emoji-rich terminal output.
 
 - Kernel optimization adds a read-only `--status` inspection and scene-specific strategy details to `--plan`, so current capability and persisted configuration can be reviewed before mutation.

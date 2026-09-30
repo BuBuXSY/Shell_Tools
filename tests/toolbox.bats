@@ -15,6 +15,15 @@ setup() {
     [[ "$output" == *"server_benchmark.sh"* ]]
 }
 
+@test "toolbox dashboard supports text and JSON output" {
+    run "$REPO_ROOT/shell_tools.sh" --dashboard
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Shell_Tools 超级运维控制台"* ]]
+    run "$REPO_ROOT/shell_tools.sh" --dashboard --format json
+    [ "$status" -eq 0 ]
+    node -e 'const v=JSON.parse(process.argv[1]); if(typeof v.health_score!=="number"||!v.kernel)process.exit(1)' "$output"
+}
+
 @test "toolbox rejects unregistered scripts" {
     run "$REPO_ROOT/shell_tools.sh" --run ../install_cert.sh
     [ "$status" -eq 2 ]

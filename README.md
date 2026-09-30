@@ -61,6 +61,8 @@ chmod +x ./*.sh
 ```bash
 ./shell_tools.sh
 ./shell_tools.sh --list
+./shell_tools.sh --dashboard
+./shell_tools.sh --dashboard --format json | jq .
 ./shell_tools.sh --run system_health_snapshot.sh -- --format json
 ```
 
