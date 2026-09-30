@@ -37,6 +37,7 @@
 #   bash optimizer.sh --scene vps        # 直接指定普通VPS
 #   bash optimizer.sh --scene vps_low    # 直接指定低配VPS
 #   bash optimizer.sh --scene baremetal  # 直接指定裸机服务器
+#   bash optimizer.sh --status           # 只读查看当前内核与已应用配置
 # ====================================================
 
 set -uo pipefail
@@ -53,6 +54,10 @@ if (( BASH_VERSINFO[0] < 4 )); then
             ;;
         --plan)
             printf '内核优化预览\nLinux 内核写入操作需要 bash 4.0+；macOS/OpenWrt 请使用平台原生网络配置。\n'
+            exit 0
+            ;;
+        --status)
+            printf '内核优化状态\n当前 Bash 版本仅支持帮助和预览；请使用 bash 4.0+ 查看完整状态。\n'
             exit 0
             ;;
     esac
@@ -86,8 +91,45 @@ DEGRADED=0
 TRANSACTION_ACTIVE=0
 TRANSACTION_COMMITTED=0
 PLAN_ONLY=0
+STATUS_ONLY=0
 RUNTIME_RESTORE_SCRIPT=""
 declare -A RUNTIME_SNAPSHOTS=()
+declare -a FAILURE_REASONS=()
+FAILURE_SUMMARY_SHOWN=0
+
+record_failure() {
+    local reason="$1"
+    local existing
+    [[ -n "$reason" ]] || return 0
+    for existing in "${FAILURE_REASONS[@]}"; do
+        [[ "$existing" == "$reason" ]] && return 0
+    done
+    FAILURE_REASONS+=("$reason")
+}
+
+print_failure_summary() {
+    local reason
+    [[ "$FAILURE_SUMMARY_SHOWN" -eq 1 ]] && return 0
+    FAILURE_SUMMARY_SHOWN=1
+    echo
+    printf '%s\n' "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    printf '%s\n' "${RED}❌ 内核优化未完全成功${RESET}"
+    if [[ "${#FAILURE_REASONS[@]}" -eq 0 ]]; then
+        printf '%s\n' "${YELLOW}原因未能自动判定，请检查系统权限、内核参数支持和备份目录。${RESET}"
+    else
+        printf '%s\n' "失败/跳过原因："
+        for reason in "${FAILURE_REASONS[@]}"; do
+            printf '  • %s\n' "$reason"
+        done
+    fi
+    if [[ -n "$BACKUP_DIR" && -d "$BACKUP_DIR" ]]; then
+        printf '持久化配置已尝试自动回滚；备份目录：%s\n' "$BACKUP_DIR"
+        [[ -x "$RUNTIME_RESTORE_SCRIPT" ]] && printf '若运行时参数已修改，可执行恢复：%s\n' "$RUNTIME_RESTORE_SCRIPT"
+    else
+        printf '本次尚未建立完整备份，未提供自动回滚路径。\n'
+    fi
+    printf '%s\n' "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+}
 
 prepare_sysctl_config() {
     mkdir -p "$(dirname "$SYSCTL_CONF")" \
@@ -120,8 +162,13 @@ _log_raw() {
 }
 log()      { _log_raw "${CYAN}[ℹ️ ]${RESET} $1"; }
 ok()       { _log_raw "${GREEN}[✅]${RESET} $1"; }
-warn()     { _log_raw "${YELLOW}[⚠️ ]${RESET} $1"; }
-err()      { _log_raw "${RED}[❌]${RESET} $1"; }
+warn()     {
+    _log_raw "${YELLOW}[⚠️ ]${RESET} $1"
+    case "$1" in
+        *失败*|*无法*|*跳过*|*未应用*|*缺少*|*不支持*|*异常*|*不可用*) record_failure "$1" ;;
+    esac
+}
+err()      { record_failure "$1"; _log_raw "${RED}[❌]${RESET} $1"; }
 log_step() {
     _log_raw ""
     _log_raw "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
@@ -183,6 +230,8 @@ TOTAL_MEM_KB=0
 TOTAL_MEM_MB=0
 TOTAL_MEM_GB=0
 CLOUD="Unknown"
+DETECTED_SCENE=""
+DETECTION_REASON=""
 BBR_SUPPORTED=1
 SCENE="unknown"
 SCENE_FORCED=0
@@ -194,7 +243,7 @@ ARCH=$(uname -m)
 usage() {
     local status="${1:-0}"
     echo -e "${CYAN}用法：${RESET}"
-    echo "  $0 [--scene <场景>] [--plan] [--help]"
+    echo "  $0 [--scene <场景>] [--plan|--status] [--help]"
     echo
     echo -e "${CYAN}可用场景：${RESET}"
     echo "  vps        普通 VPS / 云主机（均衡参数）"
@@ -209,6 +258,7 @@ usage() {
     echo "  $0 --scene bypass        # 直接指定旁路由"
     echo "  $0 --scene sbc           # 直接指定单片机"
     echo "  $0 --scene vps --plan    # 只查看变更范围"
+    echo "  $0 --status              # 只读检查当前内核与已应用配置"
     exit "$status"
 }
 
@@ -237,11 +287,52 @@ parse_args() {
                 ;;
             --help|-h) usage ;;
             --plan) PLAN_ONLY=1; shift ;;
+            --status) STATUS_ONLY=1; shift ;;
             *)
                 err "未知参数: $1"; usage 2
                 ;;
         esac
     done
+}
+
+# =========================
+# 📈 只读状态巡检
+# =========================
+show_status() {
+    local kernel os
+    kernel="$(uname -r 2>/dev/null || echo unknown)"
+    os="$(uname -s 2>/dev/null || echo unknown)"
+    local bbr="不可用" qdisc="不可用" config_state="未找到"
+    local config_value
+
+    printf '内核优化状态\n'
+    printf '系统: %s\n内核: %s\n架构: %s\n' "$os" "$kernel" "$(uname -m 2>/dev/null || echo unknown)"
+    if command -v nproc >/dev/null 2>&1; then
+        printf 'CPU: %s 核\n' "$(nproc 2>/dev/null || echo unknown)"
+    fi
+    if [[ -r /proc/meminfo ]]; then
+        printf '内存: %s MB\n' "$(awk '/MemTotal/{printf "%d", $2/1024; exit}' /proc/meminfo)"
+    fi
+    if [[ -r /sys/module/tcp_bbr/initstate || -d /sys/module/tcp_bbr ]]; then
+        bbr="已加载"
+    elif command -v modprobe >/dev/null 2>&1 && modprobe -n tcp_bbr >/dev/null 2>&1; then
+        bbr="可加载"
+    fi
+    if command -v sysctl >/dev/null 2>&1; then
+        config_value=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || true)
+        [[ -n "$config_value" ]] && printf '拥塞控制: %s\n' "$config_value"
+        config_value=$(sysctl -n net.core.default_qdisc 2>/dev/null || true)
+        [[ -n "$config_value" ]] && qdisc="$config_value"
+    fi
+    [[ -f "$SYSCTL_CONF" ]] && config_state="已安装"
+    printf 'BBR: %s\n默认队列: %s\n持久化配置: %s (%s)\n' "$bbr" "$qdisc" "$config_state" "$SYSCTL_CONF"
+    if [[ -f "$SYSCTL_CONF" ]]; then
+        printf '已配置参数: %s 项\n' "$(awk '/^[[:space:]]*[A-Za-z0-9_.]+[[:space:]]*=/{count++} END{print count+0}' "$SYSCTL_CONF")"
+    fi
+    printf '最近备份: '
+    local latest
+    latest=$(find /etc -maxdepth 1 -type d -name 'sysctl-optimizer-backup-*' -printf '%T@ %f\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2-)
+    printf '%s\n' "${latest:-无}"
 }
 
 # =========================
@@ -295,12 +386,56 @@ detect_cloud() {
     fi
 }
 
+detect_scene_recommendation() {
+    local model virt forwarding mem_mb
+    model="$(cat /sys/devices/virtual/dmi/id/product_name /sys/firmware/devicetree/base/model 2>/dev/null | tr '\0' ' ' || true)"
+    virt="$(systemd-detect-virt 2>/dev/null || true)"
+    mem_mb=$((TOTAL_MEM_KB / 1024))
+    forwarding="$(sysctl -n net.ipv4.ip_forward 2>/dev/null || echo 0)"
+
+    if [[ "$model" =~ [Rr]aspberry|[Oo]range[Pi]|[Rr]ock|[Rr]outer|[Rr]2[Ss]|[Jj]etson ]] ||
+       [[ "$ARCH" =~ ^(arm|aarch64|arm64) ]] && [[ "$mem_mb" -le 4096 ]]; then
+        DETECTED_SCENE="sbc"
+        DETECTION_REASON="检测到 ARM/SBC 硬件标识（${model:-架构 $ARCH}），建议采用闪存保护和保守参数"
+    elif [[ "$forwarding" == "1" ]] && [[ -e /proc/sys/net/netfilter/nf_conntrack_max ]]; then
+        DETECTED_SCENE="router"
+        DETECTION_REASON="检测到 IPv4 转发已开启且存在 conntrack，建议按主路由/NAT 场景优化"
+    elif [[ "$CLOUD" =~ ^(AWS|GCP|Azure|Virtualized)$ || -n "$virt" ]]; then
+        if [[ "$mem_mb" -le 1024 ]]; then
+            DETECTED_SCENE="vps_low"
+            DETECTION_REASON="检测到云/虚拟化环境且内存约 ${mem_mb}MB，建议采用低配 VPS 保守参数"
+        else
+            DETECTED_SCENE="vps"
+            DETECTION_REASON="检测到云/虚拟化环境，建议采用普通 VPS 均衡参数"
+        fi
+    elif [[ "$CPU_CORES" -ge 8 && "$mem_mb" -ge 16384 ]]; then
+        DETECTED_SCENE="baremetal"
+        DETECTION_REASON="检测到 ${CPU_CORES} 核/${mem_mb}MB 大型主机，建议采用裸机参数"
+    else
+        DETECTED_SCENE="vps"
+        DETECTION_REASON="未发现明确路由或 SBC 标识，建议采用普通 VPS 均衡参数"
+    fi
+    log "自动识别建议：${DETECTED_SCENE}（${DETECTION_REASON}）"
+}
+
 # =========================
 # 🎛 交互式场景选择菜单
 # =========================
 select_scene() {
     # 命令行已强制指定，跳过菜单
     [[ "$SCENE_FORCED" -eq 1 ]] && return 0
+
+    if [[ -n "$DETECTED_SCENE" ]]; then
+        echo
+        printf '%s\n' "${BLUE}  已根据供应商、虚拟化标识、架构、内存和网络转发状态给出建议：${RESET}"
+        printf '  建议场景：%s（%s）\n' "$DETECTED_SCENE" "$DETECTION_REASON"
+        read -rp "  采用建议？[Y/n/m=手动选择]：" detected_choice
+        case "${detected_choice,,}" in
+            ""|y|yes) SCENE="$DETECTED_SCENE"; ok "已采用自动建议: $SCENE"; return 0 ;;
+            m|manual|n|no) log "保留手动选择权，进入场景菜单" ;;
+            *) warn "无法识别输入，进入手动场景菜单" ;;
+        esac
+    fi
 
     echo
     echo -e "${BLUE}  请选择你的设备类型：${RESET}"
@@ -1225,6 +1360,11 @@ show_summary() {
 main() {
     parse_args "$@"
 
+    if [[ "$STATUS_ONLY" -eq 1 ]]; then
+        show_status
+        return 0
+    fi
+
     if [[ "$PLAN_ONLY" -eq 1 ]]; then
         printf '内核优化预览\n场景: %s\n' "${SCENE:-未指定；正式运行时交互选择}"
         printf '持久化文件: %s、/etc/security/limits.conf\n' "$SYSCTL_CONF"
@@ -1232,6 +1372,14 @@ main() {
             printf '额外文件: /etc/modules-load.d/netfilter.conf\n'
         fi
         printf '运行时可能调整: sysctl、IRQ、磁盘 I/O；正式运行会先备份并要求确认。\n'
+        case "$SCENE" in
+            vps_low) printf '关键策略: 保守 socket 缓冲、swappiness=30、文件上限约 262144。\n' ;;
+            vps) printf '关键策略: BBR/fq（可用时）、大 socket 缓冲、文件上限约 1048576。\n' ;;
+            bypass) printf '关键策略: 转发、route_localnet、conntrack、fq_codel 与透明代理兼容参数。\n' ;;
+            router) printf '关键策略: 转发、NAT/conntrack、邻居表与大 backlog。\n' ;;
+            sbc) printf '关键策略: 闪存写回保护、保守网络缓冲与文件上限约 65536。\n' ;;
+            baremetal) printf '关键策略: NUMA、IRQ、100G 网卡、磁盘调度器与激进网络参数。\n' ;;
+        esac
         return 0
     fi
 
@@ -1250,6 +1398,7 @@ main() {
 
     preflight_check
     detect_cloud
+    detect_scene_recommendation
     select_scene      # ← 替换原来的 detect_scene
 
     confirm_action
@@ -1299,8 +1448,8 @@ main() {
     TRANSACTION_COMMITTED=1
     show_summary
     if [[ "$DEGRADED" -ne 0 ]]; then
-        err "部分关键参数未成功应用，请检查日志并确认内核支持情况"
-        warn "可执行 $RUNTIME_RESTORE_SCRIPT 恢复本轮运行时调优"
+        record_failure "部分关键参数未成功应用；常见原因是内核/虚拟化限制、缺少工具或运行时路径不可写"
+        print_failure_summary
         return 1
     fi
     return 0
@@ -1335,6 +1484,9 @@ cleanup() {
         else
             err "持久化文件自动恢复失败；备份位于 $BACKUP_DIR。"
         fi
+    fi
+    if [[ "$status" -ne 0 ]]; then
+        print_failure_summary
     fi
     return "$status"
 }

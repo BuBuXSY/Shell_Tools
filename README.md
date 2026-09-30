@@ -87,6 +87,7 @@ chmod +x ./*.sh
 ```bash
 ./Auto_Upgrade_Nginx.sh --plan
 ./kernel_optimization.sh --scene vps --plan
+./kernel_optimization.sh --status
 ./install_cert.sh --plan
 ./system_config_backup.sh --plan
 ./update_frp.sh --action install --role frpc --plan
@@ -96,6 +97,10 @@ chmod +x ./*.sh
 ```
 
 `cleanup_junk.sh` 的默认行为是预览，不删除文件。它只处理超过保留天数和大小阈值、且文件名属于临时/缓存/旧日志类别的文件；每轮同时限制最大文件数和总字节数。`--interactive` 可选择每天、每周或每月写入 cron，也可以用 `--remove-cron` 移除本工具写入的任务。
+
+`kernel_optimization.sh --status` 只读显示当前内核版本、CPU/内存、BBR 与默认队列状态、持久化配置是否存在以及最近备份；不会要求 root，也不会写入系统。`--plan` 会按所选场景列出主要调优策略。
+
+交互执行时，脚本会读取 DMI/设备树型号、云厂商与虚拟化标识、CPU 架构和内存、IPv4 转发及 conntrack 状态，给出场景建议（SBC、低配/普通 VPS、主路由或裸机）。建议只会预填选择，用户可以确认采用，也可以进入手动菜单；命令行 `--scene` 始终优先。若参数无法应用，退出前会直接列出失败/跳过原因、影响和备份/运行时恢复路径，不需要先翻日志。
 
 分析脚本支持直接参数和交互模式：
 

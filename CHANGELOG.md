@@ -1,5 +1,8 @@
 # Changelog
 
+- Kernel optimization adds a read-only `--status` inspection and scene-specific strategy details to `--plan`, so current capability and persisted configuration can be reviewed before mutation.
+- Kernel optimization now recommends a scene from hardware, provider, virtualization, memory, and routing signals while retaining manual selection; failed or degraded runs show actionable reasons and recovery paths before exit.
+
 All notable changes to this project are documented in this file.
 
 ## Unreleased

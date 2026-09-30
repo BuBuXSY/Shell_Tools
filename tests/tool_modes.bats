@@ -12,6 +12,13 @@ setup() {
     run "$REPO_ROOT/kernel_optimization.sh" --scene vps --plan
     [ "$status" -eq 0 ]
     [[ "$output" == *"内核优化预览"* ]]
+    run "$REPO_ROOT/kernel_optimization.sh" --status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"内核优化状态"* ]]
+
+    run "$REPO_ROOT/kernel_optimization.sh" --scene baremetal --plan
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"关键策略: NUMA"* ]]
 
     run "$REPO_ROOT/install_cert.sh" --plan
     [ "$status" -eq 0 ]
