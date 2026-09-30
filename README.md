@@ -94,6 +94,10 @@ chmod +x ./*.sh
 ./shell_tools.sh --dashboard --format markdown
 ./shell_tools.sh --watch 2
 ./shell_tools.sh --run system_health_snapshot.sh -- --format json
+
+# 资源故障诊断与性能评分
+./system_self_heal.sh --format json | jq .
+./server_benchmark.sh --format json | jq .
 ```
 
 查看任一脚本的参数：

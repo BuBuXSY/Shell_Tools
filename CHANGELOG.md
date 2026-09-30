@@ -1,5 +1,7 @@
 # Changelog
 
+- Self-heal diagnostics now report severity, failed systemd service count, recommendations, and a JSON contract; server benchmarks now include a score and elapsed time.
+
 - Dashboard now supports Markdown output for README/status pages and an interactive `--watch` refresh mode while preserving JSON automation output.
 
 - Shell_Tools dashboard now supports `--dashboard` text output and `--dashboard --format json` for monitoring integrations, with health score, load, memory, root disk, kernel, and module count.
