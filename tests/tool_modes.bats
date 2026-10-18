@@ -65,6 +65,25 @@ setup() {
     [[ "$output" == *"无法获取版本列表"* ]]
 }
 
+@test "Nginx version lookup rejects partial timeout responses" {
+    run bash -c '
+        source "$1"
+        BUILD_DIR="$2"
+        curl() {
+            local output=""
+            while [[ "$#" -gt 0 ]]; do
+                [[ "$1" == "-o" ]] && output="$2"
+                shift
+            done
+            printf "%s" "nginx-1.10.1.tar.gz" > "$output"
+            return 28
+        }
+        get_nginx_version mainline >/dev/null
+    ' bash "$REPO_ROOT/Auto_Upgrade_Nginx.sh" "$BATS_TEST_TMPDIR"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"无法获取版本列表"* ]]
+}
+
 @test "Nginx network check follows curl proxy path" {
     run bash -c '
         source "$1"

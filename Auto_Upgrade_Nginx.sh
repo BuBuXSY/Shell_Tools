@@ -64,6 +64,7 @@ NGINX_WAS_ACTIVE=0
 INSTALL_PENDING=0
 LOG_READY=0
 RUN_STARTED=0
+NETWORK_PROXY=""
 
 # 固定第三方依赖，避免构建时静默跟随上游 HEAD。
 NGX_BROTLI_COMMIT="a71f9312c2deb28875acc7bacfdd5695a111aa53"
@@ -106,6 +107,25 @@ parse_args() {
             *) echo "❌ 未知参数: $1" >&2; usage >&2; exit 2 ;;
         esac
     done
+}
+
+# Keep every external request on the same path.  curl, wget and git each have
+# slightly different environment handling; the script uses curl for HTTP and
+# passes this value explicitly to git.
+configure_network_proxy() {
+    local configured_proxy="${HTTPS_PROXY:-${https_proxy:-${HTTP_PROXY:-${http_proxy:-${ALL_PROXY:-${all_proxy:-}}}}}}"
+    if [[ -n "$configured_proxy" ]]; then
+        NETWORK_PROXY="$configured_proxy"
+        export HTTP_PROXY="$configured_proxy" HTTPS_PROXY="$configured_proxy"
+        export http_proxy="$configured_proxy" https_proxy="$configured_proxy"
+        # All URLs used by this installer are public release endpoints.  A
+        # stale NO_PROXY entry must not silently bypass the selected proxy.
+        export NO_PROXY="" no_proxy=""
+        print_msg INFO "检测到代理，将所有外部下载统一经由: $configured_proxy"
+    else
+        NETWORK_PROXY=""
+        print_msg INFO "未检测到代理，外部下载使用系统直连"
+    fi
 }
 
 # =========================
@@ -190,6 +210,7 @@ preflight() {
     touch "$LOG_FILE" || { echo "❌ 无法创建日志文件: $LOG_FILE"; exit 1; }
     LOG_READY=1
     RUN_STARTED=1
+    configure_network_proxy
     print_step "前置检查"
 
     if ! command -v mktemp >/dev/null 2>&1; then
@@ -452,11 +473,18 @@ get_nginx_version() {
     print_msg INFO "🔍 查询 Nginx ${channel} 最新版本..." >&2
 
     # 从下载目录直接解析文件名，比解析 HTML 更稳定
-    local all_versions
-    all_versions=$(curl -fsS --max-time 15 "https://nginx.org/download/" \
-        | grep -oE 'nginx-[0-9]+\.[0-9]+\.[0-9]+\.tar\.gz' \
+    local listing="$BUILD_DIR/nginx-download-index.html" all_versions
+    if ! curl -fsSL --connect-timeout 10 --max-time 30 \
+        --retry 2 --retry-delay 2 -o "$listing" \
+        "https://nginx.org/download/"; then
+        rm -f "$listing"
+        print_msg ERROR "无法获取版本列表，请检查网络、代理或 nginx.org 是否可达" >&2
+        return 1
+    fi
+    all_versions=$(grep -oE 'nginx-[0-9]+\.[0-9]+\.[0-9]+\.tar\.gz' "$listing" \
         | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' \
         | sort -Vu)
+    rm -f "$listing"
 
     if [[ -z "$all_versions" ]]; then
         print_msg ERROR "无法获取版本列表，请检查网络、代理或 nginx.org 是否可达" >&2
@@ -491,14 +519,19 @@ download_resource() {
     local url=$1 output=$2 desc=$3 min_size=${4:-1}
     print_msg INFO "⬇️  下载 $desc ..."
 
-    # 非 TTY 环境（CI/定时任务）关闭进度条，避免日志乱码
-    local wget_args=(-q --timeout=60 --tries=1)
-    [[ -t 1 ]] && wget_args+=(--show-progress)
-
     local ok=0
     for attempt in 1 2 3; do
         rm -f "$output"
-        if wget "${wget_args[@]}" "$url" -O "$output" 2>&1 | tee -a "$LOG_FILE"; then
+        local -a curl_args=(--fail --location --connect-timeout 15 --max-time 120
+            --retry 1 --retry-delay 2 --output "$output")
+        if [[ -t 1 ]]; then
+            curl_args+=(--progress-bar)
+        else
+            curl_args+=(--silent --show-error)
+        fi
+        curl "${curl_args[@]}" "$url" 2>&1 | tee -a "$LOG_FILE"
+        local curl_status=${PIPESTATUS[0]}
+        if [[ "$curl_status" -eq 0 ]]; then
             ok=1; break
         fi
         if [[ "$attempt" -lt 3 ]]; then
@@ -640,9 +673,11 @@ clone_pinned_repo() {
 
     for attempt in 1 2 3; do
         rm -rf -- "$destination"
+        local -a git_args=()
+        [[ -n "$NETWORK_PROXY" ]] && git_args=(-c "http.proxy=$NETWORK_PROXY")
         if git init -q "$destination" \
             && git -C "$destination" remote add origin "$url" \
-            && git -C "$destination" fetch --quiet --depth=1 --no-tags origin "$commit" \
+            && git "${git_args[@]}" -C "$destination" fetch --quiet --depth=1 --no-tags origin "$commit" \
             && git -C "$destination" checkout --quiet --detach FETCH_HEAD; then
             ok=1
             break
