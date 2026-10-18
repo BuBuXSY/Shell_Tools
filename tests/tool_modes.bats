@@ -65,6 +65,16 @@ setup() {
     [[ "$output" == *"无法获取版本列表"* ]]
 }
 
+@test "Nginx network check follows curl proxy path" {
+    run bash -c '
+        source "$1"
+        curl() { [[ "$*" == *"nginx.org/download"* ]] && return 0; return 1; }
+        check_network
+    ' bash "$REPO_ROOT/Auto_Upgrade_Nginx.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"https://nginx.org/download/"* ]]
+}
+
 @test "DNS plan validates configuration without creating files" {
     config="$BATS_TEST_TMPDIR/missing.conf"
     run env DNS_MONITOR_CONFIG="$config" DNS_MONITOR_CREATE_CONFIG=true "$REPO_ROOT/collect_repeat_dns.sh" --plan

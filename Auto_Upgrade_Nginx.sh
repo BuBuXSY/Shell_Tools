@@ -281,21 +281,28 @@ detect_nginx_identity() {
 }
 
 # =========================
-# 🌐 网络检查（TCP 替代 ICMP，兼容禁 ping 的云服务器）
+# 🌐 网络检查（使用 curl，确保检查结果与实际下载路径一致）
 # =========================
 check_network() {
     print_step "网络连通性检查"
     local ok=0
-    for host_port in "nginx.org:80" "github.com:443" "8.8.8.8:53"; do
-        local h="${host_port%%:*}" p="${host_port##*:}"
-        if timeout 3 bash -c ">/dev/tcp/$h/$p" 2>/dev/null; then
+    local url
+    # curl 会按 HTTP(S)_PROXY、ALL_PROXY 和 NO_PROXY 的设置访问，
+    # 与后续下载/版本查询使用同一条网络路径。
+    for url in "https://nginx.org/download/" "https://github.com/"; do
+        if curl -fsS --connect-timeout 5 --max-time 10 -o /dev/null "$url" 2>/dev/null; then
             ok=1
-            print_msg INFO "连通测试通过 ➜ $host_port"
+            print_msg INFO "连通测试通过 ➜ $url"
             break
         fi
     done
     if [[ "$ok" -eq 0 ]]; then
-        print_msg ERROR "所有测试节点均无法连通，请检查网络或防火墙设置"
+        print_msg ERROR "Nginx/GitHub 均无法通过当前 curl 网络路径访问"
+        if [[ -n "${HTTPS_PROXY:-}${HTTP_PROXY:-}${ALL_PROXY:-}" ]]; then
+            print_msg INFO "检测到代理环境变量；请检查代理地址、端口以及 NO_PROXY 是否绕过代理"
+        else
+            print_msg INFO "未检测到代理环境变量；请检查默认路由、防火墙或设置 HTTPS_PROXY"
+        fi
         exit 1
     fi
     print_msg SUCCESS "网络连接正常 🌐"
