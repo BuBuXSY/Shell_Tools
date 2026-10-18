@@ -55,6 +55,16 @@ setup() {
     [[ "$output" == *"${BATS_TEST_TMPDIR}: 966MB"* ]]
 }
 
+@test "Nginx version lookup failure returns an error" {
+    run bash -c '
+        source "$1"
+        curl() { return 7; }
+        get_nginx_version mainline >/dev/null
+    ' bash "$REPO_ROOT/Auto_Upgrade_Nginx.sh"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"无法获取版本列表"* ]]
+}
+
 @test "DNS plan validates configuration without creating files" {
     config="$BATS_TEST_TMPDIR/missing.conf"
     run env DNS_MONITOR_CONFIG="$config" DNS_MONITOR_CREATE_CONFIG=true "$REPO_ROOT/collect_repeat_dns.sh" --plan

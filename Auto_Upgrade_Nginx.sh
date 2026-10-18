@@ -446,14 +446,14 @@ get_nginx_version() {
 
     # 从下载目录直接解析文件名，比解析 HTML 更稳定
     local all_versions
-    all_versions=$(curl -sf --max-time 15 "https://nginx.org/download/" \
+    all_versions=$(curl -fsS --max-time 15 "https://nginx.org/download/" \
         | grep -oE 'nginx-[0-9]+\.[0-9]+\.[0-9]+\.tar\.gz' \
         | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' \
         | sort -Vu)
 
     if [[ -z "$all_versions" ]]; then
-        print_msg ERROR "❌ 无法获取版本列表，请检查网络或 nginx.org 是否可达" >&2
-        exit 1
+        print_msg ERROR "无法获取版本列表，请检查网络、代理或 nginx.org 是否可达" >&2
+        return 1
     fi
 
     local version
@@ -468,8 +468,8 @@ get_nginx_version() {
     fi
 
     if [[ -z "$version" ]]; then
-        print_msg ERROR "❌ 无法解析 ${channel} 版本" >&2
-        exit 1
+        print_msg ERROR "无法解析 ${channel} 版本" >&2
+        return 1
     fi
 
     print_msg INFO "📌 找到版本: nginx-$version" >&2
@@ -1272,9 +1272,11 @@ main() {
     fi
 
     if [[ "$VERSION_CHANNEL" == "stable" ]]; then
-        target_version=$(get_nginx_version stable)
+        target_version=$(get_nginx_version stable) \
+            || { print_msg ERROR "无法确定 stable 目标版本，已停止安装"; exit 1; }
     else
-        target_version=$(get_nginx_version mainline)
+        target_version=$(get_nginx_version mainline) \
+            || { print_msg ERROR "无法确定 mainline 目标版本，已停止安装"; exit 1; }
     fi
 
     # --- 对比当前版本 ---
