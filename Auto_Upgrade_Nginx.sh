@@ -140,6 +140,44 @@ print_step() {
 # =========================
 # 🛡 前置检查
 # =========================
+select_build_root() {
+    # /tmp 常是小容量 tmpfs；在实际编译目录所在文件系统检查空间。
+    local free_mb candidate checked="" selected=""
+    local -a candidates=()
+    if [[ -n "${NGINX_BUILD_ROOT:-}" ]]; then
+        case "$NGINX_BUILD_ROOT" in
+            /*) candidates=("$NGINX_BUILD_ROOT") ;;
+            *) print_msg ERROR "NGINX_BUILD_ROOT 必须是绝对路径: $NGINX_BUILD_ROOT"; return 1 ;;
+        esac
+    else
+        candidates=(/var/tmp /tmp)
+    fi
+    for candidate in "${candidates[@]}"; do
+        if [[ ! -d "$candidate" || -L "$candidate" || ! -w "$candidate" ]]; then
+            checked="${checked}${candidate}: 不可用; "
+            continue
+        fi
+        free_mb=$(df -Pm "$candidate" 2>/dev/null | awk 'NR==2 {print $4}')
+        if [[ ! "$free_mb" =~ ^[0-9]+$ ]]; then
+            checked="${checked}${candidate}: 无法读取空间; "
+            continue
+        fi
+        if [[ "$free_mb" -lt 2048 ]]; then
+            checked="${checked}${candidate}: ${free_mb}MB; "
+            continue
+        fi
+        selected=$candidate
+        break
+    done
+    if [[ -z "$selected" ]]; then
+        print_msg ERROR "编译目录可用空间不足（需要至少 2048MB；${checked}）"
+        print_msg INFO "请检查 df -h /var/tmp /tmp，或设置 NGINX_BUILD_ROOT=/有足够空间的目录"
+        return 1
+    fi
+    BUILD_ROOT_SELECTED=$selected
+    BUILD_ROOT_FREE_MB=$free_mb
+}
+
 preflight() {
     # root 权限检查
     if [[ $EUID -ne 0 ]]; then
@@ -158,26 +196,18 @@ preflight() {
         print_msg ERROR "缺少必要命令: mktemp"
         exit 1
     fi
-    BUILD_DIR=$(umask 077; mktemp -d /tmp/nginx-build.XXXXXX) \
-        || { print_msg ERROR "无法创建安全的临时编译目录"; exit 1; }
-    chmod 0700 "$BUILD_DIR" \
-        || { print_msg ERROR "无法设置临时编译目录权限"; exit 1; }
-
     if ! command -v systemctl >/dev/null 2>&1; then
         print_msg ERROR "未检测到 systemd，本脚本当前仅支持 systemd 服务管理"
         exit 1
     fi
 
-    # 磁盘空间检查（编译 OpenSSL + nginx 至少需要 2GB 临时空间）
-    # 修复：原脚本缺少磁盘检查，低磁盘时编译到中途才报错，浪费时间
-    local free_mb
-    free_mb=$(df -m /tmp | awk 'NR==2{print $4}')
-    if [[ "$free_mb" -lt 2048 ]]; then
-        print_msg ERROR "/tmp 剩余空间不足（当前 ${free_mb}MB，需要至少 2048MB）"
-        print_msg INFO  "建议：df -h /tmp 查看后清理或更换 BUILD_DIR 路径"
-        exit 1
-    fi
-    print_msg INFO "磁盘空间检查通过（/tmp 可用 ${free_mb}MB）"
+    select_build_root || exit 1
+    local selected=$BUILD_ROOT_SELECTED free_mb=$BUILD_ROOT_FREE_MB
+    BUILD_DIR=$(umask 077; mktemp -d "${selected%/}/nginx-build.XXXXXX") \
+        || { print_msg ERROR "无法在 $selected 创建安全的临时编译目录"; exit 1; }
+    chmod 0700 "$BUILD_DIR" \
+        || { print_msg ERROR "无法设置临时编译目录权限: $BUILD_DIR"; exit 1; }
+    print_msg INFO "编译目录: $BUILD_DIR（可用 ${free_mb}MB）"
 
     # 内核版本检查（kTLS 需要 4.17+）
     local kver
@@ -1185,9 +1215,13 @@ cleanup() {
         print_msg ERROR "安装失败（退出码: $code），诊断建议："
         echo -e "  1️⃣  查看完整日志 : tail -80 $LOG_FILE"
         echo -e "  2️⃣  检查外网连通 : curl -I https://nginx.org"
-        echo -e "  3️⃣  检查磁盘空间 : df -h /tmp /usr"
+        echo -e "  3️⃣  检查磁盘空间 : df -h /var/tmp /tmp /usr"
         echo -e "  4️⃣  检查内存余量 : free -h"
-        echo -e "  5️⃣  开启调试模式 : DEBUG=1 $0"
+        if [[ "$0" == /proc/self/fd/* || "$0" == /dev/fd/* ]]; then
+            echo -e "  5️⃣  开启调试模式 : DEBUG=1 bash <(curl -fsSL https://raw.githubusercontent.com/BuBuXSY/Shell_Tools/main/Auto_Upgrade_Nginx.sh)"
+        else
+            echo -e "  5️⃣  开启调试模式 : DEBUG=1 bash $0"
+        fi
         echo -e "${C_RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${C_RESET}\n"
     fi
     return 0
@@ -1297,4 +1331,6 @@ main() {
     show_summary
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi

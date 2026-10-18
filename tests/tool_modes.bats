@@ -33,6 +33,28 @@ setup() {
     [[ "$output" == *"FRP 操作预览"* ]]
 }
 
+@test "Nginx build root override uses the selected filesystem" {
+    run env NGINX_BUILD_ROOT="$BATS_TEST_TMPDIR" bash -c '
+        source "$1"
+        df() {
+            printf "Filesystem 1048576-blocks Used Available Capacity Mounted on\nroot 10000 1000 9000 10%% /\n"
+        }
+        select_build_root
+        [[ "$BUILD_ROOT_SELECTED" == "$NGINX_BUILD_ROOT" && "$BUILD_ROOT_FREE_MB" == 9000 ]]
+    ' bash "$REPO_ROOT/Auto_Upgrade_Nginx.sh"
+    [ "$status" -eq 0 ]
+}
+
+@test "Nginx build root override reports insufficient space" {
+    run env NGINX_BUILD_ROOT="$BATS_TEST_TMPDIR" bash -c '
+        source "$1"
+        df() { printf "Filesystem 1048576-blocks Used Available Capacity Mounted on\ntmpfs 966 0 966 0%% /tmp\n"; }
+        select_build_root
+    ' bash "$REPO_ROOT/Auto_Upgrade_Nginx.sh"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"${BATS_TEST_TMPDIR}: 966MB"* ]]
+}
+
 @test "DNS plan validates configuration without creating files" {
     config="$BATS_TEST_TMPDIR/missing.conf"
     run env DNS_MONITOR_CONFIG="$config" DNS_MONITOR_CREATE_CONFIG=true "$REPO_ROOT/collect_repeat_dns.sh" --plan

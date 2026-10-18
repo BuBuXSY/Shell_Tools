@@ -179,6 +179,8 @@ sudo ./update_Country.sh
 sudo ./system_config_backup.sh
 ```
 
+Nginx 源码编译默认在 `/var/tmp` 创建私有临时目录；若该位置空间不足，会尝试 `/tmp`。所选文件系统需至少有 2GB 可用空间。可用 `sudo NGINX_BUILD_ROOT=/data ./Auto_Upgrade_Nginx.sh --channel stable` 指定其他已有目录；编译结束后脚本会清理临时目录。
+
 ### 只读巡检类
 
 ```bash
