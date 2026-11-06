@@ -133,8 +133,8 @@ if [[ "$FORMAT" == json ]]; then
     printf ']}\n'
 else
     st_info "只读系统健康快照"
-    printf '运行时间（秒）: %s\n负载（1/5/15m）: %s / %s / %s\n内存（KiB，总计/可用/已用）: %s / %s / %s%%\n监听 TCP 端口: %s\n失败 systemd 服务: %s\n' "$uptime_seconds" "$load1" "$load5" "$load15" "$mem_total_kb" "$mem_available_kb" "$memory_used_percent" "${ports:-未知}" "${services:-未知}"
-    printf '\n磁盘使用率:\n%s\n\nInode 使用率:\n%s\n' "${disk:-未知}" "${inodes:-未知}"
+    printf '运行时间（秒）: %s\n负载（1/5/15m）: %s / %s / %s\n内存（KiB，总计/可用/已用）: %s / %s / %s%%\n监听 TCP 端口: %s\n失败 systemd 服务: %s\n' "$uptime_seconds" "$load1" "$load5" "$load15" "$mem_total_kb" "$mem_available_kb" "$memory_used_percent" "${ports:-"未知"}" "${services:-"未知"}"
+    printf '\n磁盘使用率:\n%s\n\nInode 使用率:\n%s\n' "${disk:-"未知"}" "${inodes:-"未知"}"
 fi
 if [[ "$STRICT" == true && ${#WARNINGS[@]} -gt 0 ]]; then
     exit 1

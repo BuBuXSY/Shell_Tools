@@ -61,7 +61,7 @@ if (( BASH_VERSINFO[0] < 4 )); then
             exit 0
             ;;
     esac
-    echo "❌ 此脚本需要 bash 4.0+（当前: $BASH_VERSION）"
+    echo "❌ 此脚本需要 bash 4.0+（当前: ${BASH_VERSION}）"
     echo "   macOS 用户：brew install bash"
     exit 1
 fi
@@ -332,7 +332,7 @@ show_status() {
     printf '最近备份: '
     local latest
     latest=$(find /etc -maxdepth 1 -type d -name 'sysctl-optimizer-backup-*' -printf '%T@ %f\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2-)
-    printf '%s\n' "${latest:-无}"
+    printf '%s\n' "${latest:-"无"}"
 }
 
 # =========================
@@ -396,7 +396,7 @@ detect_scene_recommendation() {
     if [[ "$model" =~ [Rr]aspberry|[Oo]range[Pi]|[Rr]ock|[Rr]outer|[Rr]2[Ss]|[Jj]etson ]] ||
        [[ "$ARCH" =~ ^(arm|aarch64|arm64) ]] && [[ "$mem_mb" -le 4096 ]]; then
         DETECTED_SCENE="sbc"
-        DETECTION_REASON="检测到 ARM/SBC 硬件标识（${model:-架构 $ARCH}），建议采用闪存保护和保守参数"
+        DETECTION_REASON="检测到 ARM/SBC 硬件标识（${model:-"架构 $ARCH"}），建议采用闪存保护和保守参数"
     elif [[ "$forwarding" == "1" ]] && [[ -e /proc/sys/net/netfilter/nf_conntrack_max ]]; then
         DETECTED_SCENE="router"
         DETECTION_REASON="检测到 IPv4 转发已开启且存在 conntrack，建议按主路由/NAT 场景优化"
@@ -606,7 +606,7 @@ EOF
     chmod 0700 "$RUNTIME_RESTORE_SCRIPT" \
         || { err "无法设置运行时恢复脚本权限"; exit 1; }
     TRANSACTION_ACTIVE=1
-    ok "备份 → $BACKUP_DIR（恢复脚本: $RUNTIME_RESTORE_SCRIPT）"
+    ok "备份 → ${BACKUP_DIR}（恢复脚本: ${RUNTIME_RESTORE_SCRIPT}）"
 }
 
 # =========================
@@ -675,7 +675,7 @@ optimize_100g() {
         local speed=0; speed=$(cat "${iface}speed" 2>/dev/null || echo 0)
         [[ "$speed" =~ ^[0-9]+$ ]] || speed=0
         [[ "$speed" -ge 100000 ]] || continue
-        found=1; ok "100G+ 网卡: $name（${speed}Mb/s）"
+        found=1; ok "100G+ 网卡: ${name}（${speed}Mb/s）"
         if ! command -v ethtool >/dev/null 2>&1; then
             warn "  └─ 缺少 ethtool，跳过队列调整"
             DEGRADED=1
@@ -786,7 +786,7 @@ optimize_disk_io() {
 
         snapshot_runtime_value "$sched_file" "$current_scheduler" || continue
         if echo "$target" > "$sched_file" 2>/dev/null; then
-            ok "  💿 $name（$([ "$rotational" -eq 0 ] && echo SSD || echo HDD/Flash)）→ $target"
+            ok "  💿 ${name}（$([ "$rotational" -eq 0 ] && echo SSD || echo HDD/Flash)）→ $target"
             optimized=$((optimized + 1))
         else
             warn "  💿 $name 调度器 $target 不支持，跳过"
@@ -1044,7 +1044,7 @@ EOF
 # =========================
 apply_server_sysctl() {
     [[ "$SCENE" =~ ^(router|bypass|sbc)$ ]] && return 0
-    log_step "服务器 sysctl（场景: $SCENE）"
+    log_step "服务器 sysctl（场景: ${SCENE}）"
 
     local rmem_max wmem_max somaxconn netdev_backlog syn_backlog \
           tw_buckets swappiness dirty_ratio dirty_bg keepalive_time \
@@ -1148,7 +1148,7 @@ EOF
 # =========================
 apply_cloud_tuning() {
     [[ "$SCENE" =~ ^(router|bypass|sbc)$ ]] && return 0
-    log_step "云环境专项适配（$CLOUD）"
+    log_step "云环境专项适配（${CLOUD}）"
     local changed=0
     case "$CLOUD" in
         AWS)
@@ -1211,7 +1211,7 @@ apply_ulimit() {
     for limit_name in fs.nr_open fs.file-max; do
         kernel_limit=$(sysctl -n "$limit_name" 2>/dev/null || echo 0)
         if [[ "$kernel_limit" =~ ^[1-9][0-9]*$ ]] && (( nofile > kernel_limit )); then
-            warn "nofile=$nofile 高于当前 $limit_name=$kernel_limit，已下调"
+            warn "nofile=$nofile 高于当前 $limit_name=${kernel_limit}，已下调"
             nofile=$kernel_limit
         fi
     done
@@ -1243,7 +1243,7 @@ EOF
     mv -f "$LIMITS_TMP" "$lc" \
         || { err "无法原子写入 limits.conf"; exit 1; }
     LIMITS_TMP=""
-    ulimit -n "$nofile" 2>/dev/null && ok "ulimit -n = $nofile（当前会话生效）" \
+    ulimit -n "$nofile" 2>/dev/null && ok "ulimit -n = ${nofile}（当前会话生效）" \
         || warn "当前 shell 设置失败，重登录后生效"
 }
 
@@ -1282,7 +1282,7 @@ verify_settings() {
         if [[ "$act" == "$exp" ]]; then
             ok "  ✔ $key = $act"; pass=$((pass + 1))
         else
-            warn "  ✘ $key = $act（期望: $exp）"; fail=$((fail + 1))
+            warn "  ✘ $key = ${act}（期望: ${exp}）"; fail=$((fail + 1))
         fi
     done
     ok "验证完成：✔ $pass  ✘ $fail"
@@ -1366,7 +1366,7 @@ main() {
     fi
 
     if [[ "$PLAN_ONLY" -eq 1 ]]; then
-        printf '内核优化预览\n场景: %s\n' "${SCENE:-未指定；正式运行时交互选择}"
+        printf '内核优化预览\n场景: %s\n' "${SCENE:-"未指定；正式运行时交互选择"}"
         printf '持久化文件: %s、/etc/security/limits.conf\n' "$SYSCTL_CONF"
         if [[ "$SCENE" == router || "$SCENE" == bypass ]]; then
             printf '额外文件: /etc/modules-load.d/netfilter.conf\n'
@@ -1480,9 +1480,9 @@ cleanup() {
     [[ -n "$LIMITS_TMP" ]] && rm -f "$LIMITS_TMP"
     if [[ "$status" -ne 0 && "$TRANSACTION_ACTIVE" -eq 1 && "$TRANSACTION_COMMITTED" -eq 0 ]]; then
         if restore_persistent_on_failure; then
-            warn "已恢复本轮持久化文件；运行时内核状态仍需执行 ${RUNTIME_RESTORE_SCRIPT:-备份目录中的 RESTORE_RUNTIME.sh} 补偿恢复。"
+            warn "已恢复本轮持久化文件；运行时内核状态仍需执行 ${RUNTIME_RESTORE_SCRIPT:-"备份目录中的 RESTORE_RUNTIME.sh"} 补偿恢复。"
         else
-            err "持久化文件自动恢复失败；备份位于 $BACKUP_DIR。"
+            err "持久化文件自动恢复失败；备份位于 ${BACKUP_DIR}。"
         fi
     fi
     if [[ "$status" -ne 0 ]]; then

@@ -250,8 +250,8 @@ if [[ "$http_code" == "304" ]]; then
 fi
 
 if [[ "$http_code" != "200" || ! -s "$tmp_path" ]]; then
-    echo -e "${RED}❌ 下载响应异常（HTTP $http_code）或文件为空。${RESET}"
-    send_wechat_message "【🌏 GeoIP 数据库更新通知】\n❌ 下载响应异常（HTTP $http_code）。\n📅 时间：$(date '+%F %T')"
+    echo -e "${RED}❌ 下载响应异常（HTTP ${http_code}）或文件为空。${RESET}"
+    send_wechat_message "【🌏 GeoIP 数据库更新通知】\n❌ 下载响应异常（HTTP ${http_code}）。\n📅 时间：$(date '+%F %T')"
     exit 1
 fi
 

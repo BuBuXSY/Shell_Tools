@@ -158,7 +158,7 @@ copy_path() {
 
     src=${src%/}
     if [[ -z "$src" || "$src" != /* || "$src" == "/" || "$src" == *"/../"* || "$src" == */.. ]]; then
-        log_warn "拒绝不安全的备份路径：${src:-<空>}"
+        log_warn "拒绝不安全的备份路径：${src:-"<空>"}"
         COPY_FAILURES=$((COPY_FAILURES + 1))
         return 0
     fi
@@ -340,7 +340,7 @@ main() {
     if [[ "$PLAN_ONLY" -eq 1 ]]; then
         printf '配置备份预览\n输出目录: %s\n保留天数: %s\n' "$BACKUP_DIR" "$KEEP_DAYS"
         printf '默认路径: /etc/nginx /etc/ssh /etc/sysctl.d /etc/security /etc/fail2ban /etc/cron.d /etc/systemd/system /etc/mosdns /etc/x-ui\n'
-        printf '额外路径: %s\n' "${EXTRA_PATHS:-无}"
+        printf '额外路径: %s\n' "${EXTRA_PATHS:-"无"}"
         printf '正式运行将创建压缩包并清理超过保留天数的本机旧备份。\n'
         return 0
     fi

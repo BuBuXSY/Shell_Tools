@@ -130,6 +130,37 @@ check_shell_static() {
     fi
 }
 
+check_variable_boundaries() {
+    local matches status
+    # In the C locale, non-ASCII bytes are neither printable nor whitespace.
+    # Braces keep them out of variable names in legacy locales. This textual
+    # check also covers expanded heredocs and deliberately rejects the pattern
+    # in comments and literal strings so future edits cannot reactivate it.
+    if matches=$(LC_ALL=C grep -nE '\$[A-Za-z_][A-Za-z_0-9]*[^[:print:][:space:]]' "$@"); then
+        fail '变量紧邻非 ASCII 字符时必须使用 ${name} 明确边界：'
+        printf '%s\n' "$matches"
+    else
+        status=$?
+        if [[ "$status" -ne 1 ]]; then
+            fail "变量边界扫描失败（退出码: ${status}）"
+        fi
+    fi
+}
+
+check_locale_syntax() {
+    local test_locale file
+    command -v locale >/dev/null 2>&1 || return 0
+    # Check available legacy encodings too: unquoted non-ASCII defaults in
+    # parameter expansions can make the closing brace disappear in GBK.
+    while IFS= read -r test_locale; do
+        for file in "$@"; do
+            if ! LC_ALL="$test_locale" bash -n "$file"; then
+                fail "语法失败（locale=${test_locale}）：$file"
+            fi
+        done
+    done < <(locale -a 2>/dev/null | LC_ALL=C grep -Ei '^(C|C[.](utf-8|utf8)|en_US[.](iso8859-1|iso88591)|zh_CN[.]gbk)$' || true)
+}
+
 check_header() {
     local file="$1"
 
@@ -230,6 +261,9 @@ main() {
     userscript_files=("$SCRIPT_DIR"/*.user.js)
     config_files=("$SCRIPT_DIR"/*.conf)
     shopt -u nullglob
+
+    check_variable_boundaries "${shell_files[@]}" "$SCRIPT_DIR"/lib/*.sh
+    check_locale_syntax "${shell_files[@]}" "$SCRIPT_DIR"/lib/*.sh
 
     for file in "${shell_files[@]}"; do
         label="./${file##*/}"

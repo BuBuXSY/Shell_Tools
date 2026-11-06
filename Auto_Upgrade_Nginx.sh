@@ -654,7 +654,7 @@ download_nginx_source() {
         13C82A63B603576156E30A4EA0EA981B66B0D967) ;;
         *)
             rm -f "$output" "$signature"
-            print_msg ERROR "Nginx 源码签名者不在固定白名单中: ${signer:-未知}"
+            print_msg ERROR "Nginx 源码签名者不在固定白名单中: ${signer:-"未知"}"
             return 1
             ;;
     esac
@@ -693,7 +693,7 @@ clone_pinned_repo() {
     fi
     actual_commit=$(git -C "$destination" rev-parse HEAD 2>/dev/null || true)
     if [[ "$actual_commit" != "$commit" ]]; then
-        print_msg ERROR "$desc commit 不匹配（期望 ${commit}，实际 ${actual_commit:-未知}）"
+        print_msg ERROR "$desc commit 不匹配（期望 ${commit}，实际 ${actual_commit:-"未知"}）"
         return 1
     fi
     print_msg SUCCESS "$desc 固定提交校验通过（${commit:0:12}）🔐"
@@ -1279,7 +1279,7 @@ main() {
     if [[ "$PLAN_ONLY" -eq 1 ]]; then
         printf 'Nginx 升级预览\n当前版本: '
         if command -v nginx >/dev/null 2>&1; then nginx -v 2>&1; else printf '未安装\n'; fi
-        printf '目标通道: %s\n' "${VERSION_CHANNEL:-交互选择}"
+        printf '目标通道: %s\n' "${VERSION_CHANNEL:-"交互选择"}"
         printf '变更范围: Nginx 二进制、配置、systemd 服务；执行前会备份并验证，失败时回滚。\n'
         return 0
     fi

@@ -359,6 +359,6 @@ if RESPONSE=$(curl --fail-with-body --silent --show-error --proto '=https' --pro
   log_ok "📡 状态报告发送成功。"
 else
   log "Failed to send status report. Response: $RESPONSE"
-  log_error "📡 状态报告发送失败。${RESPONSE:+ 服务端响应: $RESPONSE}"
+  log_error "📡 状态报告发送失败。${RESPONSE:+" 服务端响应: $RESPONSE"}"
   exit 1
 fi

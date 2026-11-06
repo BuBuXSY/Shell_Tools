@@ -499,7 +499,7 @@ download_frp() {
     done
 
     if [ "$ok" -eq 0 ]; then
-        log ERR "❌ 下载失败（已重试 3 次），请检查网络或架构是否支持（$PLATFORM）"
+        log ERR "❌ 下载失败（已重试 3 次），请检查网络或架构是否支持（${PLATFORM}）"
         exit 1
     fi
 
@@ -541,7 +541,7 @@ download_frp() {
     local actual_hash
     actual_hash=$(sha256sum "$TAR_FILE" | cut -d ' ' -f1)
     if [ "$actual_hash" != "$expected_hash" ]; then
-        log ERR "❌ SHA-256 校验失败（期望 $expected_hash，实际 $actual_hash）"
+        log ERR "❌ SHA-256 校验失败（期望 ${expected_hash}，实际 ${actual_hash}）"
         exit 1
     fi
     log OK "🔐 SHA-256 校验通过"
@@ -555,7 +555,7 @@ download_frp() {
         exit 1
     fi
 
-    log OK "✅ 下载完成: $TAR_NAME（${size} bytes）"
+    log OK "✅ 下载完成: ${TAR_NAME}（${size} bytes）"
 }
 
 # =========================
@@ -571,7 +571,7 @@ install_frp() {
     local bin_src="$EXTRACT_DIR/$ROLE"
     if [ ! -f "$bin_src" ]; then
         log ERR "❌ 解压后未找到 $ROLE 二进制: $bin_src"
-        log ERR "  当前 PLATFORM=$PLATFORM，请确认架构是否正确"
+        log ERR "  当前 PLATFORM=${PLATFORM}，请确认架构是否正确"
         exit 1
     fi
 
@@ -580,7 +580,7 @@ install_frp() {
     binary_version=$("$bin_src" --version 2>/dev/null \
         | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1) || true
     if [ "v$binary_version" != "$LATEST_VERSION" ]; then
-        log ERR "❌ 二进制版本校验失败（期望 $LATEST_VERSION，实际 ${binary_version:-未知}）"
+        log ERR "❌ 二进制版本校验失败（期望 ${LATEST_VERSION}，实际 ${binary_version:-"未知"}）"
         exit 1
     fi
 
@@ -837,7 +837,7 @@ _install_service_openwrt() {
     fi
 
     if [ -e "$SERVICE_PATH" ] || [ -L "$SERVICE_PATH" ]; then
-        log WARN "⚠️  已存在 $SERVICE_PATH，保留现有服务定义"
+        log WARN "⚠️  已存在 ${SERVICE_PATH}，保留现有服务定义"
         validate_service_file_paths "$SERVICE_PATH"
     else
         STAGED_SERVICE=$(mktemp "$INIT_DIR/.${ROLE}.new.XXXXXX") || return 1
@@ -884,7 +884,7 @@ EOF
     while [ "$waited" -lt 10 ]; do
         if "$SERVICE_PATH" status >/dev/null 2>&1; then
             SERVICE_RESTARTED=1
-            log OK "✅ OpenWrt 服务已重启: $ROLE（${waited}s）"
+            log OK "✅ OpenWrt 服务已重启: ${ROLE}（${waited}s）"
             log INFO "  查看日志: logread | grep $ROLE"
             return 0
         fi
@@ -899,7 +899,7 @@ EOF
 
 _install_service_systemd() {
     if [ -e "$SERVICE_PATH" ] || [ -L "$SERVICE_PATH" ]; then
-        log WARN "⚠️  已存在 $SERVICE_PATH，保留现有服务定义"
+        log WARN "⚠️  已存在 ${SERVICE_PATH}，保留现有服务定义"
         validate_systemd_service_paths
     else
         if [ ! -d "$SYSTEMD_DIR" ]; then
@@ -958,7 +958,7 @@ EOF
     while [ "$waited" -lt 10 ]; do
         if "$SYSTEMCTL_CMD" is-active --quiet "${ROLE}.service" 2>/dev/null; then
             SERVICE_RESTARTED=1
-            log OK "✅ systemd 服务已启动: $ROLE（${waited}s）"
+            log OK "✅ systemd 服务已启动: ${ROLE}（${waited}s）"
             return 0
         fi
         sleep 1
@@ -1073,7 +1073,7 @@ main() {
     parse_args "$@"
     if [ "$PLAN_ONLY" -eq 1 ]; then
         printf 'FRP 操作预览\n角色: %s\n操作: %s\n安装根目录: %s\n服务管理: %s\n' \
-            "${CLI_ROLE:-交互选择}" "${CLI_ACTION:-交互选择}" "${FRP_ROOT:-系统根目录}" "$SERVICE_MANAGER_OVERRIDE"
+            "${CLI_ROLE:-"交互选择"}" "${CLI_ACTION:-"交互选择"}" "${FRP_ROOT:-"系统根目录"}" "$SERVICE_MANAGER_OVERRIDE"
         printf '正式运行会下载并校验发布包；更新已有实例会保留服务状态并支持失败回滚。\n'
         return 0
     fi
@@ -1127,7 +1127,7 @@ main() {
         uninstall)
             # 卸载流程
             if [ "$ASSUME_YES" -ne 1 ]; then
-                printf "\n${RED}⚠️  即将卸载 $ROLE，是否确认？[y/N]: ${RESET}"
+                printf "\n${RED}⚠️  即将卸载 ${ROLE}，是否确认？[y/N]: ${RESET}"
                 read -r confirm || confirm=""
                 case "$confirm" in
                     y|Y) ;;

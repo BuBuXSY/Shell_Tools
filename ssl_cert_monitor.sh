@@ -321,7 +321,7 @@ send_wechat() {
     lines=$(printf '%s\n' "${REPORT_LINES[@]}")
     content="🔐 SSL 证书有效期巡检
 🕒 时间：$(date '+%F %T')
-📊 总数：$TOTAL，告警：$WARN_COUNT，已过期：$EXPIRED_COUNT，无法解析：$INVALID_COUNT，扫描不完整：$SCAN_FAILURES
+📊 总数：${TOTAL}，告警：${WARN_COUNT}，已过期：${EXPIRED_COUNT}，无法解析：${INVALID_COUNT}，扫描不完整：$SCAN_FAILURES
 
 $lines"
 

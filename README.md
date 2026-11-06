@@ -341,6 +341,8 @@ git diff --check
 
 - Shell 语法与 shebang 对应的解释器。
 - ShellCheck warning 级问题（本机已安装时）。
+- 检查 Shell 脚本及公共库中变量紧邻非 ASCII 字符的写法，要求使用 `${name}` 明确边界，避免旧编码 locale 下误解析变量名。
+- 在本机已安装的 C、UTF-8、ISO-8859-1、GBK locale 下检查语法；参数展开中的中文默认值也使用引号包裹，例如 `${name:-"未知"}`。
 - 统一脚本头部、emoji / 彩色输出和可执行权限。
 - Userscript metadata、JavaScript 语法与 `document-start` 冒烟测试。
 - 使用 Bats 验证所有 Shell 工具的帮助入口和无副作用参数校验路径。

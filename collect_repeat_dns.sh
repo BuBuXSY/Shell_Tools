@@ -330,7 +330,7 @@ check_prerequisites() {
 
     local max_log_bytes
     if ! max_log_bytes=$(size_to_bytes "$MAX_LOG_SIZE"); then
-        log_error "MAX_LOG_SIZE 格式无效: $MAX_LOG_SIZE（示例: 100M、1G）"
+        log_error "MAX_LOG_SIZE 格式无效: ${MAX_LOG_SIZE}（示例: 100M、1G）"
         exit 1
     fi
     
@@ -653,7 +653,7 @@ send_email_notification() {
     local message="$1"
     
     if command -v mail &> /dev/null && [[ -n "${EMAIL_TO:-}" ]]; then
-        if echo -e "$message" | mail -s "${EMAIL_SUBJECT:-DNS监控报告}" "$EMAIL_TO"; then
+        if echo -e "$message" | mail -s "${EMAIL_SUBJECT:-"DNS监控报告"}" "$EMAIL_TO"; then
             log_info "邮件通知已发送"
         else
             log_error "邮件通知发送失败"

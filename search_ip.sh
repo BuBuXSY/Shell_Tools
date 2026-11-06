@@ -252,7 +252,7 @@ for ip in "${ip_array[@]}"; do
     fi
 
     log_ok "📍 IP: $ip_address 频次: $count 位置: $location"
-    message+=$'\n'"📌 ${ip_address}（$location） - $count 次"
+    message+=$'\n'"📌 ${ip_address}（${location}） - $count 次"
 done
 
 if [[ "$push_enabled" == false ]]; then
@@ -275,6 +275,6 @@ if response=$(curl --fail-with-body --silent --show-error --proto '=https' --pro
     [[ "$response" =~ \"errcode\"[[:space:]]*:[[:space:]]*0 ]]; then
     log_ok "🎉 推送成功！"
 else
-    log_error "🔥 推送失败，请检查 webhook！${response:+ 服务端响应: $response}"
+    log_error "🔥 推送失败，请检查 webhook！${response:+" 服务端响应: $response"}"
     exit 1
 fi

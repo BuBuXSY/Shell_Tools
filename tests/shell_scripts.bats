@@ -4,15 +4,48 @@ setup() {
     REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd -P)"
 }
 
+shell_test_locales() {
+    printf '%s\n' C
+    locale -a 2>/dev/null | LC_ALL=C grep -Ei '^(C[.](utf-8|utf8)|en_US[.](iso8859-1|iso88591)|zh_CN[.]gbk)$' || true
+}
+
 @test "every shell tool provides a successful help path" {
-    local script
-    for script in "$REPO_ROOT"/*.sh; do
-        run timeout 5s "$script" --help
-        if [ "$status" -ne 0 ]; then
-            printf 'help failed: %s status=%s output=%s\n' "$script" "$status" "$output" >&2
-        fi
+    local script test_locale
+    while IFS= read -r test_locale; do
+        for script in "$REPO_ROOT"/*.sh; do
+            run env LC_ALL="$test_locale" timeout 5s "$script" --help
+            if [ "$status" -ne 0 ]; then
+                printf 'help failed: %s locale=%s status=%s output=%s\n' "$script" "$test_locale" "$status" "$output" >&2
+            fi
+            [ "$status" -eq 0 ]
+        done
+    done < <(shell_test_locales)
+}
+
+@test "IP report uses cached locations without network under available locales" {
+    printf '%s\n' '192.0.2.1 dns.example GET / 200' > "$BATS_TEST_TMPDIR/access.log"
+    printf '192.0.2.1\t测试位置\n' > "$BATS_TEST_TMPDIR/cache"
+    local test_locale
+    while IFS= read -r test_locale; do
+        run env LC_ALL="$test_locale" "$REPO_ROOT/search_ip.sh" \
+            --log-file "$BATS_TEST_TMPDIR/access.log" --cache-file "$BATS_TEST_TMPDIR/cache" --no-push
         [ "$status" -eq 0 ]
-    done
+        [[ "$output" == *"频次: 1 位置: 测试位置"* ]]
+        [[ "$output" == *"已选择仅输出本地报告"* ]]
+    done < <(shell_test_locales)
+}
+
+@test "DNS invalid log size preserves the diagnostic under available locales" {
+    printf '%s\n' "DOMAIN_FILE=/dev/null" "OUTPUT_FILE=$BATS_TEST_TMPDIR/out" \
+        "LOG_FILE=$BATS_TEST_TMPDIR/dns.log" "LOCK_FILE=$BATS_TEST_TMPDIR/lock" \
+        'MAX_LOG_SIZE=invalid' 'ENABLE_HISTORY=false' > "$BATS_TEST_TMPDIR/dns.conf"
+    local test_locale
+    while IFS= read -r test_locale; do
+        run env LC_ALL="$test_locale" "$REPO_ROOT/collect_repeat_dns.sh" --config "$BATS_TEST_TMPDIR/dns.conf"
+        [ "$status" -eq 1 ]
+        [[ "$output" == *"MAX_LOG_SIZE 格式无效: invalid（示例: 100M、1G）"* ]]
+        [[ "$output" != *"unbound variable"* ]]
+    done < <(shell_test_locales)
 }
 
 @test "invalid arguments return the documented usage status" {

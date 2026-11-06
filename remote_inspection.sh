@@ -12,7 +12,7 @@ hosts=''; plan=0; format=text
 json_escape(){ printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; :a;N;$!ba;s/\n/\\n/g'; }
 while [[ $# -gt 0 ]]; do case "$1" in --host) hosts="${2:-}"; shift 2;; --format) format="${2:-}"; shift 2;; --plan) plan=1; shift;; -h|--help) usage; exit 0;; *) echo "未知参数: $1" >&2; exit 2;; esac; done
 [[ "$format" == text || "$format" == json ]] || { echo '无效输出格式' >&2; exit 2; }
-if (( plan )); then printf '远程巡检预览\n目标: %s\n仅执行 SSH 只读命令，不写入远端。\n' "${hosts:-交互指定}"; exit 0; fi
+if (( plan )); then printf '远程巡检预览\n目标: %s\n仅执行 SSH 只读命令，不写入远端。\n' "${hosts:-"交互指定"}"; exit 0; fi
 [[ -n "$hosts" ]] || { echo '--host 不能为空' >&2; exit 2; }
 IFS=',' read -r -a targets <<< "$hosts"; failed=0
 for host in "${targets[@]}"; do
