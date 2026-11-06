@@ -55,6 +55,51 @@ setup() {
     [[ "$output" == *"${BATS_TEST_TMPDIR}: 966MB"* ]]
 }
 
+# Include single-byte and legacy multibyte locales when installed: UTF-8
+# punctuation next to an unbraced variable can be parsed as part of its name.
+nginx_test_locales() {
+    printf '%s\n' C
+    locale -a 2>/dev/null | LC_ALL=C grep -Ei '^(C[.](utf-8|utf8)|en_US[.](iso8859-1|iso88591)|zh_CN[.]gbk)$' || true
+}
+
+@test "Nginx preflight handles localized messages under available locales" {
+    [ "$EUID" -eq 0 ] || skip "preflight requires root"
+    local test_locale
+    while IFS= read -r test_locale; do
+        run env LC_ALL="$test_locale" NGINX_BUILD_ROOT="$BATS_TEST_TMPDIR" bash -c '
+            source "$1"
+            LOG_FILE="$2/preflight.log"
+            configure_network_proxy() { :; }
+            df() { printf "Filesystem 1048576-blocks Used Available Capacity Mounted on\nroot 10000 1000 9000 10%% /\n"; }
+            preflight
+            [[ -d "$BUILD_DIR" && "$(stat -c %a "$BUILD_DIR")" == 700 ]]
+        ' bash "$REPO_ROOT/Auto_Upgrade_Nginx.sh" "$BATS_TEST_TMPDIR"
+        [ "$status" -eq 0 ]
+        [[ "$output" == *"前置检查完成"* ]]
+        [[ "$output" == *"（可用 9000MB）"* ]]
+        [[ "$output" != *"unbound variable"* ]]
+        [ -z "$(find "$BATS_TEST_TMPDIR" -name 'nginx-build.*' -print)" ]
+    done < <(nginx_test_locales)
+}
+
+@test "Nginx failed exit cleans workspace and prints diagnostics under available locales" {
+    local test_locale
+    while IFS= read -r test_locale; do
+        run env LC_ALL="$test_locale" bash -c '
+            source "$1"
+            LOG_FILE="$2/install.log"
+            RUN_STARTED=1
+            BUILD_DIR=$(mktemp -d "$2/nginx-build.XXXXXX")
+            exit 37
+        ' bash "$REPO_ROOT/Auto_Upgrade_Nginx.sh" "$BATS_TEST_TMPDIR"
+        [ "$status" -eq 37 ]
+        [[ "$output" == *"安装失败（退出码: 37），诊断建议："* ]]
+        [[ "$output" == *"检查磁盘空间"* ]]
+        [[ "$output" != *"unbound variable"* ]]
+        [ -z "$(find "$BATS_TEST_TMPDIR" -name 'nginx-build.*' -print)" ]
+    done < <(nginx_test_locales)
+}
+
 @test "Nginx version lookup failure returns an error" {
     run bash -c '
         source "$1"

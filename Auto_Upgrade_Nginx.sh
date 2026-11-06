@@ -228,7 +228,7 @@ preflight() {
         || { print_msg ERROR "无法在 $selected 创建安全的临时编译目录"; exit 1; }
     chmod 0700 "$BUILD_DIR" \
         || { print_msg ERROR "无法设置临时编译目录权限: $BUILD_DIR"; exit 1; }
-    print_msg INFO "编译目录: $BUILD_DIR（可用 ${free_mb}MB）"
+    print_msg INFO "编译目录: ${BUILD_DIR}（可用 ${free_mb}MB）"
 
     # 内核版本检查（kTLS 需要 4.17+）
     local kver
@@ -382,7 +382,7 @@ install_dependencies() {
                 || { print_msg ERROR "依赖安装失败，请检查 dnf 源"; exit 1; }
             ;;
         *)
-            print_msg ERROR "不支持的发行版: $OS（仅支持 ubuntu/debian/centos/rhel/almalinux/rocky/fedora）"
+            print_msg ERROR "不支持的发行版: ${OS}（仅支持 ubuntu/debian/centos/rhel/almalinux/rocky/fedora）"
             exit 1
             ;;
     esac
@@ -554,7 +554,7 @@ download_resource() {
         return 1
     fi
 
-    print_msg SUCCESS "✅ 下载完成: $desc（$(numfmt --to=iec "$size" 2>/dev/null || echo "${size}B")）"
+    print_msg SUCCESS "✅ 下载完成: ${desc}（$(numfmt --to=iec "$size" 2>/dev/null || echo "${size}B")）"
 }
 
 validate_tar_archive() {
@@ -585,7 +585,7 @@ download_verified_archive() {
         || { rm -f "$output"; print_msg ERROR "$desc SHA-256 计算失败"; return 1; }
     if [[ "$actual_sha256" != "$expected_sha256" ]]; then
         rm -f "$output"
-        print_msg ERROR "$desc SHA-256 不匹配（期望 $expected_sha256，实际 $actual_sha256）"
+        print_msg ERROR "$desc SHA-256 不匹配（期望 ${expected_sha256}，实际 ${actual_sha256}）"
         return 1
     fi
 
@@ -693,7 +693,7 @@ clone_pinned_repo() {
     fi
     actual_commit=$(git -C "$destination" rev-parse HEAD 2>/dev/null || true)
     if [[ "$actual_commit" != "$commit" ]]; then
-        print_msg ERROR "$desc commit 不匹配（期望 $commit，实际 ${actual_commit:-未知}）"
+        print_msg ERROR "$desc commit 不匹配（期望 ${commit}，实际 ${actual_commit:-未知}）"
         return 1
     fi
     print_msg SUCCESS "$desc 固定提交校验通过（${commit:0:12}）🔐"
@@ -884,7 +884,7 @@ compile_and_install() {
 
     # 源码目录存在性检查（修复：原版直接 cd，目录不存在时静默失败）
     if [[ ! -d "$src_dir" ]]; then
-        print_msg ERROR "源码目录不存在: $src_dir（解压可能失败）"
+        print_msg ERROR "源码目录不存在: ${src_dir}（解压可能失败）"
         exit 1
     fi
     cd "$src_dir" || { print_msg ERROR "无法进入源码目录: $src_dir"; exit 1; }
@@ -1055,7 +1055,7 @@ fix_existing_paths() {
             || { print_msg ERROR "nginx.conf PID 路径修复前备份失败"; exit 1; }
         sed -i 's|/var/run/nginx.pid|/run/nginx.pid|g' /etc/nginx/nginx.conf \
             || { cp -p "$bak" /etc/nginx/nginx.conf; print_msg ERROR "nginx.conf PID 路径修复失败"; exit 1; }
-        print_msg SUCCESS "🔧 nginx.conf PID 路径已更新（备份: $bak）"
+        print_msg SUCCESS "🔧 nginx.conf PID 路径已更新（备份: ${bak}）"
     fi
 }
 
@@ -1254,7 +1254,7 @@ cleanup() {
     fi
     if [[ $code -ne 0 && "$RUN_STARTED" -eq 1 ]]; then
         echo -e "\n${C_RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${C_RESET}"
-        print_msg ERROR "安装失败（退出码: $code），诊断建议："
+        print_msg ERROR "安装失败（退出码: ${code}），诊断建议："
         echo -e "  1️⃣  查看完整日志 : tail -80 $LOG_FILE"
         echo -e "  2️⃣  检查外网连通 : curl -I https://nginx.org"
         echo -e "  3️⃣  检查磁盘空间 : df -h /var/tmp /tmp /usr"
